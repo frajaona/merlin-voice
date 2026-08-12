@@ -1,0 +1,10 @@
+python-dotenv
+fastapi[all]
+uvicorn
+mlx-lm
+mlx-audio
+pipecat-ai[openai,silero,mlx-whisper,kokoro]>=1.3.0
+aiortc
+nltk
+loguru
+ddgs

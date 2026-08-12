@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Merlin</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f0f0f;
+      color: #f0f0f0;
+      font-family: -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+      gap: 32px;
+      padding: 24px;
+    }
+    h1 { font-size: 2rem; font-weight: 300; letter-spacing: 0.1em; color: #aaa; }
+    #orb {
+      width: 120px; height: 120px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #4a90d9, #1a1a4e);
+      box-shadow: 0 0 40px rgba(74, 144, 217, 0.3);
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2.5rem;
+    }
+    #orb.listening {
+      animation: pulse 1.5s ease-in-out infinite;
+      box-shadow: 0 0 60px rgba(74, 144, 217, 0.6);
+    }
+    #orb.speaking {
+      background: radial-gradient(circle at 35% 35%, #d94a90, #4e1a3a);
+      box-shadow: 0 0 60px rgba(217, 74, 144, 0.6);
+      animation: pulse 0.8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+    #status {
+      font-size: 0.9rem;
+      color: #666;
+      text-align: center;
+      min-height: 1.4em;
+      transition: color 0.3s;
+    }
+    #status.active { color: #4a90d9; }
+    #transcript {
+      font-size: 1rem;
+      color: #888;
+      text-align: center;
+      max-width: 320px;
+      min-height: 3em;
+      font-style: italic;
+    }
+    #btn-disconnect {
+      background: transparent;
+      border: 1px solid #333;
+      color: #555;
+      padding: 10px 24px;
+      border-radius: 24px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      display: none;
+    }
+    #btn-disconnect:hover { border-color: #555; color: #888; }
+    audio { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Merlin</h1>
+  <div id="orb">🎙</div>
+  <div id="status">Appuie pour commencer</div>
+  <div id="transcript"></div>
+  <button id="btn-disconnect">Déconnecter</button>
+  <!-- No `muted` attribute: it's boolean, muted="false" still mutes -->
+  <audio id="audio" autoplay playsinline></audio>
+
+  <script>
+    const orb = document.getElementById('orb');
+    const status = document.getElementById('status');
+    const transcript = document.getElementById('transcript');
+    const audio = document.getElementById('audio');
+    const btnDisconnect = document.getElementById('btn-disconnect');
+
+    let pc = null;
+    let pcId = null;
+    let connected = false;
+
+    function setStatus(text, active = false) {
+      status.textContent = text;
+      status.className = active ? 'active' : '';
+    }
+
+    function setOrb(state) {
+      orb.className = state;
+      orb.textContent = state === 'speaking' ? '🔊' : '🎙';
+    }
+
+    async function connect() {
+      if (connected) return;
+      setStatus('Connexion...', true);
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: false,
+        });
+
+        // No STUN — local LAN only, host candidates gathered in <100ms
+        pc = new RTCPeerConnection({ iceServers: [] });
+
+        pc.ontrack = (e) => {
+          if (e.track.kind === 'audio') {
+            const stream = e.streams[0] || new MediaStream([e.track]);
+            audio.srcObject = stream;
+            audio.play().catch(err => console.warn('audio.play():', err));
+            setOrb('listening');
+            setStatus('À l\'écoute...', true);
+          }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+            disconnect();
+          }
+        };
+
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+
+        // Required: Pipecat uses the data channel for control signaling
+        const dc = pc.createDataChannel('pipecat');
+        dc.onmessage = (e) => console.log('Data channel msg:', e.data);
+
+        // Keep-alive: once the server has received any datachannel message, it
+        // treats the connection as DEAD if nothing arrives for 3 seconds and
+        // silently drops all outgoing audio. Ping well under that window.
+        dc.onopen = () => {
+          console.log('Data channel open');
+          dc.send('ping');
+          setInterval(() => { if (dc.readyState === 'open') dc.send('ping'); }, 1000);
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        // Wait for ICE — host-only candidates gather in <100ms on LAN
+        await new Promise(resolve => {
+          if (pc.iceGatheringState === 'complete') return resolve();
+          pc.onicegatheringstatechange = () => {
+            if (pc.iceGatheringState === 'complete') resolve();
+          };
+          setTimeout(resolve, 500); // max 500ms then send anyway
+        });
+
+        const resp = await fetch(`${window.location.origin}/api/offer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sdp: pc.localDescription.sdp,
+            type: pc.localDescription.type,
+            pc_id: pcId,
+          }),
+        });
+
+        const answer = await resp.json();
+        pcId = answer.pc_id;
+
+        await pc.setRemoteDescription({ sdp: answer.sdp, type: answer.type });
+
+        connected = true;
+        btnDisconnect.style.display = 'block';
+        setStatus('Connecté — parle maintenant', true);
+        setOrb('listening');
+
+      } catch (err) {
+        console.error(err);
+        setStatus('Erreur: ' + err.message);
+        setOrb('');
+      }
+    }
+
+    function disconnect() {
+      if (pc) { pc.close(); pc = null; }
+      audio.srcObject = null;
+      connected = false;
+      pcId = null;
+      btnDisconnect.style.display = 'none';
+      setStatus('Appuie pour commencer');
+      setOrb('');
+      orb.textContent = '🎙';
+    }
+
+    orb.addEventListener('click', () => {
+      if (!connected) {
+        // Unlock audio inside the user gesture (iOS autoplay policy)
+        audio.muted = false;
+        audio.play().catch(() => {});
+        connect();
+      }
+    });
+
+    btnDisconnect.addEventListener('click', disconnect);
+  </script>
+</body>
+</html>
