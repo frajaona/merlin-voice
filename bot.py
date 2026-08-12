@@ -3,7 +3,9 @@ Merlin Voice — conversational voice AI pipeline
 Pipecat + MLX Whisper + local LLM (Ollama direct, Hermes via env override) + Kokoro TTS
 """
 import asyncio
+import datetime
 import os
+import uuid
 from contextlib import asynccontextmanager
 from typing import Dict
 
@@ -20,6 +22,8 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.frames.frames import Frame, TranscriptionFrame
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
@@ -155,6 +159,28 @@ def load_plugins() -> dict:
 
 PLUGINS = load_plugins()
 
+from transcript_store import TranscriptStore
+
+TRANSCRIPTS = TranscriptStore()
+
+
+class UserTranscriptLogger(FrameProcessor):
+    """Passthrough processor that records every final user transcription.
+
+    Logs raw STT output (even turns later discarded as echo or noise) — the
+    misrecognitions are exactly what the STT test set needs.
+    """
+
+    def __init__(self, session_id: str):
+        super().__init__()
+        self._session_id = session_id
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame):
+            await asyncio.to_thread(TRANSCRIPTS.append, self._session_id, "user", frame.text)
+        await self.push_frame(frame, direction)
+
 pcs_map: Dict[str, SmallWebRTCConnection] = {}
 
 # No STUN needed for local LAN — host candidates only
@@ -252,13 +278,18 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         settings=KokoroTTSService.Settings(language=Language.FR),
     )
 
-    # Track what the bot says so barge-in can recognize (and ignore) its own
-    # voice echoing back through the phone's mic.
+    session_id = f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+    logger.info(f"session started: {session_id}")
+
+    # Track what the bot says: for barge-in echo detection, and for the
+    # transcript log. Sentences are logged when synthesized — a barge-in can
+    # cut playback, so the tail of a logged answer may not have been heard.
     recent_tts_words = RecentTTSWords()
     _orig_run_tts = tts.run_tts
 
     async def _run_tts_tracking(text: str, context_id: str):
         recent_tts_words.add(text)
+        await asyncio.to_thread(TRANSCRIPTS.append, session_id, "assistant", text)
         async for frame in _orig_run_tts(text, context_id):
             yield frame
 
@@ -290,6 +321,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         transport.input(),
         vad,
         stt,
+        UserTranscriptLogger(session_id),
         aggregators.user(),
         llm,
         tts,
