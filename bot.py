@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import os
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Dict
 
@@ -123,13 +124,35 @@ Si l'utilisateur demande une action que tu ne sais pas encore faire (contrôler 
 
 
 def _system_prompt() -> str:
-    import datetime
     months = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet",
               "août", "septembre", "octobre", "novembre", "décembre"]
     days = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
     now = datetime.date.today()
     date_fr = f"{days[now.weekday()]} {now.day} {months[now.month - 1]} {now.year}"
-    return SYSTEM_PROMPT.format(current_date=date_fr)
+    return SYSTEM_PROMPT.format(current_date=date_fr) + _skill_ready_note()
+
+
+def _skill_ready_note() -> str:
+    """One-time note about freshly built skill candidates awaiting approval."""
+    import json
+    ready_file = Path(__file__).resolve().parent / "data" / "skill-ready.jsonl"
+    if not ready_file.exists():
+        return ""
+    entries = [json.loads(l) for l in ready_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+    fresh = [e for e in entries if not e.get("announced")]
+    if not fresh:
+        return ""
+    for e in fresh:
+        e["announced"] = True
+    ready_file.write_text(
+        "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8"
+    )
+    capabilities = ", ".join(f"« {e['capability']} » (candidats/{e['slug']})" for e in fresh)
+    return (
+        "\nNote interne : de nouveaux outils ont été fabriqués et attendent l'approbation "
+        f"de Fred avant activation : {capabilities}. Mentionne-le brièvement au début de "
+        "la conversation, une seule fois."
+    )
 
 # Tool plugins: every plugins/*.py exporting SCHEMA + handler is auto-loaded.
 # New capabilities are added there, never wired here (see plugins/README.md).

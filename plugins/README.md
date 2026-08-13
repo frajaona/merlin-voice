@@ -28,3 +28,18 @@ Each plugin module MUST export:
 
 `tools/probe_tool_call.py` runs a full voice round-trip against a running bot.
 Adapt the spoken question to exercise a new tool before shipping it.
+
+## Generated skills (the workshop)
+
+`workshop.py` turns pending entries of `data/feature-requests.jsonl` into
+candidates written by a headless coding CLI (worker chain: `agy`, then `codex`
+— see `WORKSHOP_WORKERS` / `AGY_MODEL` env vars). Candidates land in
+`candidates/`, which is **inert** — nothing there is ever loaded by the bot.
+They must pass an AST safety scan (banned imports: subprocess, ctypes, pty,
+pickle, multiprocessing, shutil, socket) and their own generated smoke test.
+
+Activation is always a human decision:
+
+    venv/bin/python tools/approve_skill.py <slug>   # read the code first!
+
+then restart the bot.
