@@ -21,11 +21,20 @@ SCHEMA = FunctionSchema(
 )
 
 
+# Strong references to pending timers — a bare create_task() can be
+# garbage-collected before it fires (asyncio holds tasks weakly).
+_PENDING_TIMERS: set = set()
+
+
 async def _timer_task(duration: int, llm):
     """Tâche en arrière-plan qui attend la durée puis pousse une phrase."""
     await asyncio.sleep(duration)
     logger.info(f"Minuteur de {duration} secondes terminé.")
-    await llm.push_frame(TTSSpeakFrame("C'est l'heure ! Le minuteur est terminé."))
+    try:
+        await llm.push_frame(TTSSpeakFrame("C'est l'heure ! Le minuteur est terminé."))
+    except Exception as e:
+        # Session may have ended before the timer fired.
+        logger.warning(f"minuteur terminé mais impossible de parler: {e}")
 
 
 async def handler(params: FunctionCallParams):
@@ -43,7 +52,9 @@ async def handler(params: FunctionCallParams):
         logger.info(f"mettre_un_minuteur: [{duration}s]")
         
         # On lance la tâche en arrière-plan sans bloquer la boucle d'événements
-        asyncio.create_task(_timer_task(duration, params.llm))
+        task = asyncio.create_task(_timer_task(duration, params.llm))
+        _PENDING_TIMERS.add(task)
+        task.add_done_callback(_PENDING_TIMERS.discard)
         
         # On appelle le callback de résultat exactement une fois avec un dict
         await params.result_callback({"status": "minuteur lancé", "duration_seconds": duration})
