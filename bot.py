@@ -147,11 +147,12 @@ def _skill_ready_note() -> str:
     ready_file.write_text(
         "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8"
     )
-    capabilities = ", ".join(f"« {e['capability']} » (candidats/{e['slug']})" for e in fresh)
+    capabilities = ", ".join(f"« {e['capability']} » (slug : {e['slug']})" for e in fresh)
     return (
-        "\nNote interne : de nouveaux outils ont été fabriqués et attendent l'approbation "
-        f"de Fred avant activation : {capabilities}. Mentionne-le brièvement au début de "
-        "la conversation, une seule fois."
+        "\nNote interne : de nouveaux outils ont été fabriqués et attendent une approbation "
+        f"avant activation : {capabilities}. Mentionne-le brièvement au début de la "
+        "conversation, une seule fois. Si Fred confirme vouloir l'activer, appelle "
+        "l'outil approve_skill avec le slug correspondant."
     )
 
 # Tool plugins: every plugins/*.py exporting SCHEMA + handler is auto-loaded.
@@ -179,8 +180,6 @@ def load_plugins() -> dict:
         logger.info(f"plugin loaded: {schema.name} ({path.name})")
     return plugins
 
-
-PLUGINS = load_plugins()
 
 from transcript_store import TranscriptStore
 
@@ -318,13 +317,16 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
 
     tts.run_tts = _run_tts_tracking
 
-    for tool_name, module in PLUGINS.items():
+    # Rescan plugins per conversation so freshly approved skills load without
+    # a restart (mid-session activation is handled by the approve_skill tool).
+    plugins = load_plugins()
+    for tool_name, module in plugins.items():
         llm.register_function(tool_name, module.handler)
 
     messages = [{"role": "system", "content": _system_prompt()}]
     context = LLMContext(
         messages=messages,
-        tools=ToolsSchema(standard_tools=[m.SCHEMA for m in PLUGINS.values()]),
+        tools=ToolsSchema(standard_tools=[m.SCHEMA for m in plugins.values()]),
     )
     # Barge-in requires a real transcription of >= 3 words while the bot is
     # speaking — a bare VAD blip (breath, noise, speaker echo) no longer cuts

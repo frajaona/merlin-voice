@@ -24,7 +24,7 @@ class MockFunctionCallParams:
 
 async def run_test():
     # 1. Importer le plugin via importlib depuis le fichier local
-    plugin_path = Path(__file__).parent / "mettre_un_minuteur.py"
+    plugin_path = Path(__file__).parent.parent / "plugins" / "mettre_un_minuteur.py"
     spec = importlib.util.spec_from_file_location("mettre_un_minuteur", plugin_path)
     plugin = importlib.util.module_from_spec(spec)
     sys.modules["mettre_un_minuteur"] = plugin
