@@ -6,9 +6,6 @@ modèle cloud, revue humaine, activation).
 """
 import datetime
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 from loguru import logger
@@ -52,28 +49,12 @@ async def handler(params: FunctionCallParams):
         with open(REQUESTS_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-        # On-the-fly mode: kick the skill workshop in a detached process so a
-        # candidate gets built while the conversation continues. Disable with
-        # WORKSHOP_AUTORUN=0 (requests then wait for a manual/nightly run).
-        workshop_started = False
-        if os.getenv("WORKSHOP_AUTORUN", "1") != "0":
-            repo = REQUESTS_FILE.parent.parent
-            log_file = open(repo / "data" / "workshop.log", "a")
-            subprocess.Popen(
-                [sys.executable, str(repo / "workshop.py")],
-                cwd=repo, stdout=log_file, stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            workshop_started = True
-
         await params.result_callback({
             "logged": True,
-            "workshop_started": workshop_started,
             "instruction": (
                 "Dis honnêtement que tu ne sais pas encore faire ça, que la demande "
-                "est notée" + (" et que tu commences à fabriquer cet outil — il sera "
-                "proposé à l'activation une fois prêt." if workshop_started else
-                " pour qu'un nouvel outil soit ajouté.")
+                "est notée, et propose de fabriquer cet outil maintenant (quelques "
+                "minutes). N'appelle build_skill que si l'utilisateur accepte."
             ),
         })
     except Exception as e:

@@ -53,11 +53,15 @@ def save_requests(requests: list):
     )
 
 
+_SLUG_STOPWORDS = {"le", "la", "les", "un", "une", "de", "des", "du", "d", "l",
+                   "en", "et", "a", "au", "aux", "pour", "avec", "sur", "dans", "que"}
+
+
 def slugify(capability: str) -> str:
     import unicodedata
     text = unicodedata.normalize("NFD", capability.lower())
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
-    words = re.sub(r"[^a-z0-9]+", " ", text).split()
+    words = [w for w in re.sub(r"[^a-z0-9]+", " ", text).split() if w not in _SLUG_STOPWORDS]
     return "_".join(words[:4]) or "skill"
 
 
@@ -174,6 +178,7 @@ def process_one() -> bool:
     log(f"processing request: [{pending.get('capability')}] -> {slug}")
     CANDIDATES.mkdir(exist_ok=True)
     pending["status"] = "building"
+    pending["building_ts"] = datetime.datetime.now().isoformat(timespec="seconds")
     save_requests(requests)
 
     outcome = None
