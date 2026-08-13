@@ -44,9 +44,15 @@ def promote(slug: str) -> Path:
         ).replace('Path(__file__).parent / "', 'Path(__file__).parent.parent / "plugins" / "')
         (REPO / "tools" / f"test_{slug}.py").write_text(text, encoding="utf-8")
         test.unlink()
-    subprocess.run(["git", "add", "-A"], cwd=REPO, check=True, capture_output=True)
+    # Stage only this skill's files — never sweep unrelated working-tree changes.
+    paths = [f"plugins/{slug}.py", f"candidates/{slug}.py"]
+    if (REPO / "tools" / f"test_{slug}.py").exists():
+        paths.append(f"tools/test_{slug}.py")
+        paths.append(f"candidates/test_{slug}.py")
+    subprocess.run(["git", "add", "--"] + paths, cwd=REPO, check=True, capture_output=True)
     subprocess.run(
-        ["git", "commit", "-q", "-m", f"approve skill '{slug}': promote candidate to plugins/"],
+        ["git", "commit", "-q", "-m", f"approve skill '{slug}': promote candidate to plugins/",
+         "--only", "--"] + paths,
         cwd=REPO, check=True, capture_output=True,
     )
     return target
