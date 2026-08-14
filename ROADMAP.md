@@ -41,6 +41,61 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
    données synthétiques françaises) si le zipformer montre des faiblesses en
    conditions bruyantes.
 
+## À faire — reliquat de la revue du 13/08 (« The Merlin Review »)
+
+Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
+
+### Ops
+
+- **Épingler les dépendances** : `requirements.txt` est sans versions (sauf
+  pipecat ≥1.3.0) alors que bot.py monkeypatche des internals Pipecat — un
+  `pip install -U` peut casser la voix en silence.
+- **Cold start Ollama** : aucun `OLLAMA_KEEP_ALIVE` (vérifié : modèle déchargé
+  après idle) → 10–20 s de reload sur la première question. `-1` ou
+  `keep_alive` par requête.
+- **Contexte 262 K** : le KV cache du 35B est dimensionné pour 262 144 tokens
+  (~28 Go résidents pour un fichier de 18 Go). 16–32 K libèrent ~8–10 Go ;
+  re-vérifier le TTFT avec `tools/bench_ttft.py`.
+- **Contexte de session non borné** : la liste de messages grandit sans limite
+  dans une connexion — résumer ou tronquer aux N derniers tours.
+- **Endpoint ouvert** : `/api/offer` sans aucune auth — n'importe qui sur le
+  LAN utilise le GPU. Un token partagé, ou Tailscale.
+- **Vrai certificat** (Tailscale serve / mkcert) pour tuer l'avertissement
+  du téléphone.
+- **LaunchAgents périmés** : `com.merlin.monitor` + `com.merlin.warmup` et
+  `~/scripts/check-ai-stack.sh` surveillent l'ANCIENNE stack (Honcho, Router
+  :8101, Wyoming Whisper/Piper, docker) — à réécrire pour la stack actuelle
+  (ollama serve + bot.py, survie au reboot) ou à supprimer.
+- **Issues Pipecat upstream** à déposer (keep-alive coupe l'audio ; pacing en
+  rafale) — reproduisibles avec `tools/probe_barge_in.py`.
+
+### Fonctionnalités
+
+- **Profil nocturne** (moitié manquante de la mémoire « plan A ») : job qui
+  distille `transcripts.db` en `profile.md` lisible/éditable, injecté au
+  démarrage de session. Ensuite seulement : rappel par embeddings (plan B,
+  `nomic-embed-text` + table keyée sur turns.id) ; mem0 uniquement si A+B
+  plafonnent.
+- **Outil `home_assistant`** (lumières/volets via HA Yellow REST/WebSocket) —
+  l'upgrade quotidien le plus visible ; le prompt n'en parle plus, l'outil
+  rendrait la promesse réelle.
+- **`delegate()` → Hermes** : tâches longues hors chemin chaud, résultat en
+  follow-up parlé ou briefing matinal.
+- **Raisonnement à la demande** : outil qui relance le même modèle avec
+  `reasoning_effort` élevé (4–5 s, annoncé par une phrase-pont).
+
+### Bancs d'essai (données avant conviction — utiliser transcripts.db)
+
+- **LLM** : A/B d'une semaine contre Mistral Small 3.x (français plus natif,
+  dense donc décodage plus lent) — swap = `LLM_MODEL`. Juger ton/tutoiement/
+  fiabilité des tool calls.
+- **STT** : jeu de test personnel de ~20 énoncés depuis transcripts.db, puis
+  Parakeet v3 (parakeet-mlx) ; Kyutai STT (streaming fr) = upgrade stratégique
+  (barge-in instantané), à faire avec son TTS.
+- **TTS** : audition Chatterbox Multilingual v3 (clonage, MIT — vérifier le
+  real-time factor sur MPS) ; Kyutai TTS si Kyutai STT ; Kokoro reste le
+  fallback derrière une env var.
+
 ## Plafond connu
 
 - **Parole simultanée** : deux voix en même temps → embedding mélangé, le tour

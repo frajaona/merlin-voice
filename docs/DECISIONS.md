@@ -4,6 +4,36 @@ Chaque décision clé, avec sa justification et les données mesurées derrière
 Ne pas modifier une valeur calibrée sans nouvelles données — les logs et
 `data/transcripts.db` sont la source pour re-calibrer.
 
+## 2026-08-12/13 — Bring-up (décisions d'architecture initiales)
+
+- **Ollama direct dans le chemin chaud, pas Hermes.** Mesuré : Hermes ~1,7 s
+  TTFT contre ~0,25 s en direct. Hermes (localhost:8642, OpenAI-compat, clé
+  requise) reste joignable via `LLM_BASE_URL` ; rôle futur = worker de fond
+  (`delegate()`), jamais le chemin chaud.
+- **`reasoning_effort: "none"` obligatoire.** Le mode thinking de Qwen3 est
+  actif par défaut et brûle 15–50 s de tokens avant le premier mot parlé.
+  `think:false` et `/no_think` sont IGNORÉS par l'endpoint OpenAI d'Ollama —
+  seul `reasoning_effort` marche. Avec ça, le 35B-A3B (MoE, ~3,3 B actifs)
+  répond aussi vite que le 9B → un seul modèle, pas de routage à deux étages.
+- **Routage par auto-score de confiance : rejeté.** Signal non calibré, et
+  l'enveloppe JSON requise casse le streaming TTS. L'escalade se fait par
+  appel d'outil (web_search, futur delegate/home_assistant).
+- **Bugs Pipecat/WebRTC du bring-up** (tous corrigés, sondes dans `tools/`) :
+  `muted="false"` (attribut booléen HTML = muet quoi qu'il arrive) ; pacing en
+  rafale après un stall de l'event loop (monkeypatch re-ancrage de
+  `RawAudioTrack`) ; auto-interruption par écho (barge-in exige ≥3 mots
+  transcrits + filtre des mots récents du TTS) ; keep-alive : Pipecat coupe
+  l'audio sortant en silence si >3 s sans message datachannel — le client
+  ping à 1 s (`static/index.html`). Les deux derniers méritent des issues
+  upstream (non déposées).
+- **web_search** via `ddgs` (DuckDuckGo, sans clé API, region fr-fr) ;
+  « Je regarde ça » pendant la recherche en thread.
+- **Revue d'architecture complète du 13/08** (artifact « The Merlin Review »,
+  lien dans la mémoire assistant / historique claude.ai) : verdicts intégrés
+  ici et dans `ROADMAP.md` ; le P0 (prompt promettant domotique et mémoire
+  inexistantes → actions hallucinées) est corrigé, le prompt interdit
+  désormais d'annoncer une action sans outil.
+
 ## 2026-08-13 — Garde vocale
 
 - **VAD confidence 0.3 → 0.6** (`bot.py`). 0.3 laissait passer souffles et
