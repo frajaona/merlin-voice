@@ -94,15 +94,13 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   défaut actuel — le modèle saute web_search ~40 % du temps sur l'actualité ;
   à 0,2 : 14/15, zéro appel parasite). Vérifier à l'oreille que le ton ne
   devient pas monotone ; sinon 0,3–0,4.
-- **LLM, A/B** : une semaine contre Mistral Small 3.x (français plus natif,
-  dense donc décodage plus lent) — swap = `LLM_MODEL`. Juger ton/tutoiement/
-  fiabilité des tool calls. Nouveaux entrants août 2026 à auditionner sur le
-  français d'abord (aucun n'est un labo francophone) : Nemotron 3.5 Lightning
-  (30B MoE 3B actifs, taillé tool-calling, tag `:30b-mlx`, français non
-  documenté) ; Muse Glimmer (Meta, 30B multimodal Apache 2.0, raisonnement
-  réglable low→xhigh = piste native pour le « raisonnement à la demande »,
-  français non documenté) ; Gemma 4 (multilingue historiquement fort, MTP sur
-  MLX).
+- **LLM, A/B — bench fait 15/08, finale : qwen vs mistral-small3.2.**
+  Nemotron 3.5 (invente la météo, vouvoie), Muse Glimmer (TTFT 2,4–5 s) et
+  Gemma 4 26B (thinking non désactivable, outils 10/18) éliminés — détails
+  dans `docs/DECISIONS.md`. Reste à faire : une semaine d'usage réel avec
+  `LLM_MODEL=mistral-small3.2` (18/18 outils, TTFT 0,27 s, français très
+  naturel), juger le ton à l'oreille. Nemotron à retenir comme candidat
+  worker de fond (delegate), Muse Glimmer pour une future caméra.
 - **STT** : jeu de test personnel de ~20 énoncés depuis transcripts.db, puis
   Parakeet v3 (parakeet-mlx) ; Kyutai STT (streaming fr) = upgrade stratégique
   (barge-in instantané), à faire avec son TTS.

@@ -134,6 +134,38 @@ prompt Merlin, outil web_search). Scripts : jobs Claude `bench_nvfp4.py`,
   reste sur disque ; re-tester à la prochaine release Ollama et dans le
   harnais A/B français (ton à basse température à vérifier à l'oreille).
 
+## 2026-08-15 — Bench des challengers LLM
+
+Protocole identique au bench NVFP4 (chemin chaud simulé, temp 0,2, prompt
+Merlin, 6 questions de latence + 18 cas web_search). TTFT médian / décodage /
+score outils :
+
+- **qwen3.6:35b-a3b-q4_K_M (titulaire)** : 0,30 s / 110 tok/s / **18/18** —
+  confirme qu'à temp 0,2 le tool-calling est fiable à 100 % sur ce jeu.
+- **mistral-small3.2** : 0,27 s / 36 tok/s / **18/18** — seul challenger
+  qualifié. Français naturel et concis, tutoiement stable. Les 36 tok/s du
+  dense dépassent largement la vitesse de parole du TTS (~3 mots/s) : pas un
+  problème en voix.
+- **nemotron-3.5-lightning** : 0,29 s / 112 tok/s / 16/18 — **éliminé du
+  chemin chaud pour cause** : INVENTE la météo de demain au lieu de chercher
+  (2/2, « ensoleillé avec des températures… » fabriqué), vouvoie dès le
+  premier tour, ignore la règle des deux phrases. À reconsidérer comme worker
+  de fond (contexte 1M, décodage rapide, taillé agent).
+- **muse-glimmer** : TTFT 2,4–5,0 s / 27 tok/s / 16/18 — **éliminé pour la
+  voix** (latence, probablement l'encodeur multimodal). Français correct, ses
+  « échecs » outils étaient des demandes de précision raisonnables. Piste
+  future : caméra / tâches de fond multimodales.
+- **gemma4:26b** : **éliminé** — le thinking n'est pas désactivable via
+  l'endpoint OpenAI d'Ollama (`reasoning_effort` rejeté) → 300–600 chunks de
+  raisonnement par réponse, TTFT 5,7–9,7 s ; outils 10/18 (oublie
+  `type:"news"`, demande la ville au lieu de chercher).
+
+**Décision : finale qwen vs mistral-small3.2, à trancher à l'oreille** (A/B
+en usage réel, swap `LLM_MODEL=mistral-small3.2` — vérifier au passage son
+comportement en contexte long, 32 K seulement sur le tag de base). Les
+réponses françaises complètes des cinq modèles sont dans l'artifact de
+session et le tmp du job Claude (`challenger_report.md`).
+
 ## Incidents (à ne pas reproduire)
 
 - **13/08 : profil vocal réel détruit par un test.** La migration du profil
