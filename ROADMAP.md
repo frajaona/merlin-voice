@@ -86,9 +86,21 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 
 ### Bancs d'essai (données avant conviction — utiliser transcripts.db)
 
-- **LLM** : A/B d'une semaine contre Mistral Small 3.x (français plus natif,
+- **LLM, étape 0 (sans risque, avant tout A/B)** : même modèle sur le moteur
+  MLX d'Ollama — `qwen3.6:35b-a3b-nvfp4` (24 Go, comme le q4_K_M actuel).
+  Annoncé (blog Ollama 11/06/26) : NVFP4 ≈ moitié de la perte de qualité du
+  q4_K_M, ~20 % plus rapide, snapshots multi-tours (TTFT/mémoire). Vérifier
+  avec `tools/bench_ttft.py` + une écoute française ; variante `-mtp`
+  (multi-token prediction) à essayer aussi.
+- **LLM, A/B** : une semaine contre Mistral Small 3.x (français plus natif,
   dense donc décodage plus lent) — swap = `LLM_MODEL`. Juger ton/tutoiement/
-  fiabilité des tool calls.
+  fiabilité des tool calls. Nouveaux entrants août 2026 à auditionner sur le
+  français d'abord (aucun n'est un labo francophone) : Nemotron 3.5 Lightning
+  (30B MoE 3B actifs, taillé tool-calling, tag `:30b-mlx`, français non
+  documenté) ; Muse Glimmer (Meta, 30B multimodal Apache 2.0, raisonnement
+  réglable low→xhigh = piste native pour le « raisonnement à la demande »,
+  français non documenté) ; Gemma 4 (multilingue historiquement fort, MTP sur
+  MLX).
 - **STT** : jeu de test personnel de ~20 énoncés depuis transcripts.db, puis
   Parakeet v3 (parakeet-mlx) ; Kyutai STT (streaming fr) = upgrade stratégique
   (barge-in instantané), à faire avec son TTS.
