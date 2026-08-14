@@ -1,6 +1,10 @@
 """
 Merlin Voice — conversational voice AI pipeline
 Pipecat + MLX Whisper + local LLM (Ollama direct, Hermes via env override) + Kokoro TTS
+
+Public-use hardening lives in voice_guard.py: speaker verification (only the
+owner's voice is answered), attention gating (wake word "Merlin" + follow-up
+window, so side-conversation is ignored) and Whisper hallucination filtering.
 """
 import asyncio
 import datetime
@@ -36,7 +40,22 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.services.kokoro.tts import KokoroTTSService
 import pipecat.services.kokoro.tts as _kokoro_tts_module
 from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.services.whisper.stt import MLXModel, WhisperSTTServiceMLX
+from pipecat.services.whisper.stt import WhisperSTTServiceMLX
+
+from voice_guard import (
+    STT_MODEL,
+    GateCore,
+    GuardedWhisperSTT,
+    HouseholdProfiles,
+    LastBotUtterance,
+    VoiceGate,
+    normalize_words as _normalize_words,
+)
+from wake_word import WakeState, WakeWordDetector, WakeWordListener
+
+# Raw-audio wake-word engine (French zipformer) — "off" falls back to
+# transcript-only wake detection.
+RAW_WAKE = os.getenv("MERLIN_RAW_WAKE", "on").lower() not in ("off", "0", "false")
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection, IceServer
@@ -214,13 +233,6 @@ pcs_map: Dict[str, SmallWebRTCConnection] = {}
 ice_servers = []
 
 
-def _normalize_words(text: str) -> list:
-    import unicodedata
-    text = unicodedata.normalize("NFD", text.lower())
-    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
-    return [w for w in "".join(c if c.isalnum() else " " for c in text).split() if w]
-
-
 class RecentTTSWords:
     """Words the bot spoke in the last `window_secs` — the echo reference."""
 
@@ -276,19 +288,33 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         ),
     )
 
+    # confidence 0.3 let breaths and background noise through to Whisper,
+    # which hallucinated turns ("Merci.", "Sous-titrage ST' 501"). 0.6 still
+    # catches soft speech through a phone mic but skips most noise.
     vad = VADProcessor(
         vad_analyzer=SileroVADAnalyzer(
             params=VADParams(
                 stop_secs=0.8,
-                start_secs=0.1,
-                confidence=0.3,
+                start_secs=0.2,
+                confidence=0.6,
             )
         )
     )
 
-    stt = WhisperSTTServiceMLX(
-        model=MLXModel.LARGE_V3_TURBO_Q4,
-        language="fr",
+    session_id = f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+    logger.info(f"session started: {session_id}")
+
+    def _log_filtered(text: str):
+        """Rejected utterances keep feeding the STT test set, marked as such."""
+        asyncio.get_running_loop().run_in_executor(
+            None, TRANSCRIPTS.append, session_id, "user", text
+        )
+
+    # fp16 turbo (not Q4): measurably better French accuracy, same
+    # architecture; plenty of headroom in RAM.
+    stt = GuardedWhisperSTT(
+        settings=WhisperSTTServiceMLX.Settings(model=STT_MODEL, language=Language.FR),
+        log_fn=_log_filtered,
     )
 
     llm = OpenAILLMService(
@@ -305,17 +331,17 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         settings=KokoroTTSService.Settings(language=Language.FR),
     )
 
-    session_id = f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
-    logger.info(f"session started: {session_id}")
-
-    # Track what the bot says: for barge-in echo detection, and for the
-    # transcript log. Sentences are logged when synthesized — a barge-in can
-    # cut playback, so the tail of a logged answer may not have been heard.
+    # Track what the bot says: for barge-in echo detection, for the question
+    # detection of the attention gate, and for the transcript log. Sentences
+    # are logged when synthesized — a barge-in can cut playback, so the tail
+    # of a logged answer may not have been heard.
     recent_tts_words = RecentTTSWords()
+    last_bot = LastBotUtterance()
     _orig_run_tts = tts.run_tts
 
     async def _run_tts_tracking(text: str, context_id: str):
         recent_tts_words.add(text)
+        last_bot.text = text
         await asyncio.to_thread(TRANSCRIPTS.append, session_id, "assistant", text)
         async for frame in _orig_run_tts(text, context_id):
             yield frame
@@ -347,10 +373,25 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         ),
     )
 
-    pipeline = Pipeline([
-        transport.input(),
+    # Speaker + attention gate: drops non-household voices and
+    # side-conversation before they can start a turn, and binds each exchange
+    # to the person who woke Merlin (see voice_guard.py). The transcript
+    # logger sits after it so accepted turns are logged clean; the gates log
+    # their own rejections with a "[filtré: …]" prefix.
+    wake_state = WakeState() if RAW_WAKE else None
+    voice_gate = VoiceGate(
+        core=GateCore(HouseholdProfiles(), last_bot, wake_state=wake_state),
+        log_fn=_log_filtered,
+    )
+
+    stages = [transport.input()]
+    if wake_state is not None:
+        stages.append(WakeWordListener(WakeWordDetector(wake_state)))
+
+    pipeline = Pipeline(stages + [
         vad,
         stt,
+        voice_gate,
         UserTranscriptLogger(session_id),
         aggregators.user(),
         llm,
@@ -432,6 +473,10 @@ app.router.lifespan_context = lifespan
 if __name__ == "__main__":
     import argparse
     from pathlib import Path
+
+    # Persist logs (the terminal is ephemeral): data/merlin.log, rotated.
+    logger.add("data/merlin.log", rotation="10 MB", retention=5, enqueue=True)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7860)

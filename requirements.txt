@@ -8,3 +8,4 @@ aiortc
 nltk
 loguru
 ddgs
+sherpa-onnx
