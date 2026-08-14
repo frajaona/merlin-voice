@@ -86,12 +86,14 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 
 ### Bancs d'essai (données avant conviction — utiliser transcripts.db)
 
-- **LLM, étape 0 (sans risque, avant tout A/B)** : même modèle sur le moteur
-  MLX d'Ollama — `qwen3.6:35b-a3b-nvfp4` (24 Go, comme le q4_K_M actuel).
-  Annoncé (blog Ollama 11/06/26) : NVFP4 ≈ moitié de la perte de qualité du
-  q4_K_M, ~20 % plus rapide, snapshots multi-tours (TTFT/mémoire). Vérifier
-  avec `tools/bench_ttft.py` + une écoute française ; variante `-mtp`
-  (multi-token prediction) à essayer aussi.
+- **LLM, étape 0 — FAIT 14/08, verdict : rester sur q4_K_M.** nvfp4/MLX
+  mesuré : TTFT médian 0,09 s vs 0,33 s mais régression tool-call (9/15 vs
+  14/15 à temp 0,2, un refus déterministe). Détails dans `docs/DECISIONS.md`.
+  Re-tester à la prochaine release Ollama ; variante `-mtp` jamais essayée.
+- **Fixer `temperature` ≈ 0,2 dans bot.py** (mesuré 14/08 : à temp 1 — le
+  défaut actuel — le modèle saute web_search ~40 % du temps sur l'actualité ;
+  à 0,2 : 14/15, zéro appel parasite). Vérifier à l'oreille que le ton ne
+  devient pas monotone ; sinon 0,3–0,4.
 - **LLM, A/B** : une semaine contre Mistral Small 3.x (français plus natif,
   dense donc décodage plus lent) — swap = `LLM_MODEL`. Juger ton/tutoiement/
   fiabilité des tool calls. Nouveaux entrants août 2026 à auditionner sur le

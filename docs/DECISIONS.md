@@ -105,6 +105,35 @@ Ne pas modifier une valeur calibrée sans nouvelles données — les logs et
 - Un faux éveil est peu coûteux : il n'ouvre que la fenêtre — la voix doit
   encore correspondre à un profil inscrit pour être répondue.
 
+## 2026-08-14 — Bench NVFP4 (moteur MLX) vs q4_K_M, et température
+
+Contexte : le blog Ollama (06/26) annonce le moteur MLX + quant NVFP4
+(« moitié de la perte de qualité du q4_K_M, ~20 % plus rapide, snapshots
+multi-tours »). Testé `qwen3.6:35b-a3b-nvfp4` (24 Go, comme q4_K_M) en
+simulant le chemin chaud exact (streaming, `reasoning_effort:"none"`,
+prompt Merlin, outil web_search). Scripts : jobs Claude `bench_nvfp4.py`,
+`bench_toolrepeat.py`, `bench_temp.py`.
+
+- **Latence : nvfp4 gagne nettement.** TTFT médian 0,09 s contre 0,33 s
+  (q4_K_M), décodage équivalent (~100–105 tok/s). Le gain vient du moteur
+  MLX et de ses snapshots.
+- **Découverte principale — la température, pas le quant.** bot.py ne
+  fixait aucune température → défaut de la fiche modèle = 1.0. À temp 1,
+  les DEUX quants sautent web_search ~40 % du temps sur les questions
+  d'actualité (« Je n'ai pas accès aux résultats… » sans chercher — le
+  comportement interdit par le prompt). À **température 0,2** : q4_K_M
+  14/15 appels corrects, 0 appel parasite sur les pièges.
+- **Régression tool-call de nvfp4 mise à nue par la basse température** :
+  9/15, dont un échec déterministe 0/5 (« Qui a gagné le match de foot
+  hier soir ? » → refus systématique sans outil ; q4_K_M : 4/5). Le quant
+  change le comportement, pas seulement la « qualité ».
+- **Décision : rester sur q4_K_M** — 0,24 s de TTFT gagnés sont
+  imperceptibles dans ~1,5 s de latence bout-en-bout, une régression
+  d'outil ne l'est pas (préférence ferme : ne pas agir à tort). Fixer la
+  température basse dans bot.py est LE vrai gain de fiabilité. nvfp4
+  reste sur disque ; re-tester à la prochaine release Ollama et dans le
+  harnais A/B français (ton à basse température à vérifier à l'oreille).
+
 ## Incidents (à ne pas reproduire)
 
 - **13/08 : profil vocal réel détruit par un test.** La migration du profil
