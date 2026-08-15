@@ -211,6 +211,35 @@ Même protocole. Questions posées : MLX sauve-t-il muse-glimmer ? qwen3.8:27b
   documenté : qwen3.6-nvfp4 (retest prochaine release Ollama), nemotron
   (candidat worker delegate), muse-glimmer:30b-nvfp4-dflash (piste caméra).
 
+## 2026-08-15 — KV cache 32 K, historique borné, dépendances épinglées
+
+- **KV cache : 262 144 → 32 768 tokens** via un tag dérivé
+  `qwen3.6:35b-a3b-q4_K_M-ctx32k` (Modelfile `PARAMETER num_ctx 32768`,
+  mêmes blobs, zéro disque en plus). Mesuré (`tools/bench_longctx.py`,
+  protocole avec tour long ~10 k chars) : TTFT identique au tag de base
+  (médian 0,18 s court, 0,18–0,19 s long, prefill froid ~1,3 s dans les
+  deux cas), résident **28 → 23 Go (−5 Go)**. Le paramètre du Modelfile
+  gagne sur le défaut de l'app Ollama — vérifié via `ollama ps`
+  (CONTEXT 32768). Pourquoi un tag dérivé et pas une option par requête :
+  l'endpoint OpenAI-compat ne transmet pas `num_ctx`, et un num_ctx
+  divergent entre requêtes ferait recharger le modèle.
+- **Piège de bench découvert au passage** : sans `reasoning_effort:"none"`
+  le TTFT « mesuré » est de 7–17 s (le modèle pense en silence). Tout bench
+  doit envoyer les mêmes réglages que bot.py (temp 0,2, reasoning none) —
+  `tools/bench_longctx.py` le fait maintenant et remplace le protocole de
+  `bench_ttft.py` pour les comparaisons futures.
+- **Historique de session borné** (`HistoryTrimmer` dans bot.py) : le
+  contexte envoyé au LLM est coupé à système + `MERLIN_MAX_HISTORY_MSGS`
+  (défaut 40 ≈ 20 tours). La coupe tombe toujours sur un message user pour
+  ne jamais orphaner un résultat d'outil (400 API sinon). La conversation
+  complète reste dans transcripts.db — on ne borne que ce que le modèle
+  relit à chaque tour. 40 messages ≪ 32 K tokens : les deux plafonds sont
+  cohérents.
+- **requirements.txt épinglé** aux versions du venv (pipecat-ai 1.3.0 en
+  tête) : bot.py monkeypatche des internals Pipecat, un `pip install -U`
+  aveugle pouvait casser la voix en silence. Procédure de montée de version
+  dans le commentaire du fichier.
+
 ## Incidents (à ne pas reproduire)
 
 - **13/08 : profil vocal réel détruit par un test.** La migration du profil

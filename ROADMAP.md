@@ -28,6 +28,13 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
 - **2026-08-15** — **Cold start Ollama corrigé** : `_preload_llm()` au
   démarrage épingle le modèle (`keep_alive:-1`, endpoint natif) — plus de
   rechargement de 6–7 s au premier tour d'une session.
+- **2026-08-15** — **KV cache 262 K → 32 K** (tag dérivé
+  `qwen3.6:35b-a3b-q4_K_M-ctx32k`) : −5 Go résidents (28 → 23 Go), TTFT
+  identique mesuré avec `tools/bench_longctx.py` (nouveau bench conforme au
+  protocole : tour long ~10 k chars, réglages de prod). **Historique de
+  session borné** (`HistoryTrimmer`, `MERLIN_MAX_HISTORY_MSGS=40`) — la
+  liste de messages ne grandit plus sans limite. **requirements.txt
+  épinglé** (pipecat 1.3.0 et al.). Détails dans `docs/DECISIONS.md`.
 
 ## À faire (par ordre de valeur estimée)
 
@@ -57,16 +64,14 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 
 ### Ops
 
-- **Épingler les dépendances** : `requirements.txt` est sans versions (sauf
-  pipecat ≥1.3.0) alors que bot.py monkeypatche des internals Pipecat — un
-  `pip install -U` peut casser la voix en silence.
+- ~~Épingler les dépendances~~ **fait 15/08** (versions du venv, procédure de
+  montée de version en commentaire du fichier).
 - ~~Cold start Ollama~~ **fait 15/08** (`_preload_llm()` dans bot.py,
   `keep_alive:-1` via l'endpoint natif au démarrage).
-- **Contexte 262 K** : le KV cache du 35B est dimensionné pour 262 144 tokens
-  (~28 Go résidents pour un fichier de 18 Go). 16–32 K libèrent ~8–10 Go ;
-  re-vérifier le TTFT avec `tools/bench_ttft.py`.
-- **Contexte de session non borné** : la liste de messages grandit sans limite
-  dans une connexion — résumer ou tronquer aux N derniers tours.
+- ~~Contexte 262 K~~ **fait 15/08** : tag `-ctx32k` (num_ctx 32768), −5 Go,
+  TTFT identique (`tools/bench_longctx.py`).
+- ~~Contexte de session non borné~~ **fait 15/08** : `HistoryTrimmer` coupe à
+  système + `MERLIN_MAX_HISTORY_MSGS` (40) sans orphaner de résultat d'outil.
 - **Endpoint ouvert** : `/api/offer` sans aucune auth — n'importe qui sur le
   LAN utilise le GPU. Un token partagé, ou Tailscale.
 - **Vrai certificat** (Tailscale serve / mkcert) pour tuer l'avertissement

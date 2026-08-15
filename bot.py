@@ -27,7 +27,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import Frame, TranscriptionFrame
+from pipecat.frames.frames import Frame, LLMContextFrame, TranscriptionFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
@@ -118,7 +118,11 @@ _webrtc_transport_module.RawAudioTrack.recv = _paced_recv
 # To route through Hermes instead, set:
 #   LLM_BASE_URL=http://127.0.0.1:8642/v1  LLM_MODEL=default  LLM_API_KEY=<hermes key>  LLM_REASONING_EFFORT=
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://127.0.0.1:11434/v1")
-LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.6:35b-a3b-q4_K_M")
+# -ctx32k = same weights with num_ctx 32768 baked in (Modelfile). The bare tag
+# loads with a 262144-token KV cache (~28 GB resident); 32K loads at ~23 GB for
+# identical TTFT (measured 2026-08-15, tools/bench_longctx.py). 32K ≫ any voice
+# session once the history is trimmed (MERLIN_MAX_HISTORY_MSGS below).
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.6:35b-a3b-q4_K_M-ctx32k")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "ollama")
 # Qwen3 thinking mode adds 15-50s of silent reasoning before the first spoken
 # token — must stay off in the voice hot path. Empty string = don't send.
@@ -128,6 +132,10 @@ LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "none")
 # news-type questions; at 0.2 it fires 14/15 with zero spurious calls
 # (measured 2026-08-14, docs/DECISIONS.md).
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+# A connection's message list grows without bound (a phone left connected all
+# day). Cap the history sent to the LLM: system prompt + at most this many
+# messages (2 per plain turn, more when tools fire). 40 ≈ 20 recent turns.
+MAX_HISTORY_MSGS = int(os.getenv("MERLIN_MAX_HISTORY_MSGS", "40"))
 TTS_VOICE = os.getenv("TTS_VOICE", "ff_siwis")
 
 SYSTEM_PROMPT = """Tu es Merlin, un assistant personnel intelligent et chaleureux. Tu réponds toujours en français et tu tutoies l'utilisateur.
@@ -231,6 +239,30 @@ class UserTranscriptLogger(FrameProcessor):
         if isinstance(frame, TranscriptionFrame):
             await asyncio.to_thread(TRANSCRIPTS.append, self._session_id, "user", frame.text)
         await self.push_frame(frame, direction)
+
+class HistoryTrimmer(FrameProcessor):
+    """Caps the context sent to the LLM at system prompt + MAX_HISTORY_MSGS.
+
+    Trims the shared LLMContext in place just before each inference. The cut
+    always lands on a plain user message so an assistant tool_calls message is
+    never separated from its tool results (which would 400 the API). The full
+    conversation stays in transcripts.db regardless — this only bounds what
+    the model re-reads every turn.
+    """
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, LLMContextFrame):
+            msgs = frame.context.get_messages()
+            head = [m for m in msgs[:1] if m.get("role") == "system"]
+            tail = msgs[len(head):]
+            if len(tail) > MAX_HISTORY_MSGS:
+                tail = tail[-MAX_HISTORY_MSGS:]
+                while tail and tail[0].get("role") != "user":
+                    tail.pop(0)
+                frame.context.set_messages(head + tail)
+        await self.push_frame(frame, direction)
+
 
 pcs_map: Dict[str, SmallWebRTCConnection] = {}
 
@@ -400,6 +432,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         voice_gate,
         UserTranscriptLogger(session_id),
         aggregators.user(),
+        HistoryTrimmer(),
         llm,
         tts,
         transport.output(),
