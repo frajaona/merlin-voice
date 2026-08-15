@@ -189,6 +189,28 @@ Même protocole. Questions posées : MLX sauve-t-il muse-glimmer ? qwen3.8:27b
 - **La finale reste qwen3.6:35b-a3b vs mistral-small3.2.** À surveiller : un
   éventuel MoE de la génération qwen3.8 (seul le 27b dense existe à ce jour).
 
+## 2026-08-15 — Verdict A/B en production : qwen confirmé, mistral recalé
+
+- **Mesuré sur usage réel** (log, LLM → première phrase TTS) : qwen médiane
+  0,49 s sur 51 tours ; mistral-small3.2 médiane 1,54 s, p90 1,94 s sur 18
+  tours, et ça croît avec le contexte (1,3 s à 5,5 k chars d'historique,
+  2,0 s à 12 k). Ressenti utilisateur confirmé après quelques minutes.
+- **Cause structurelle, pas réglable** : prefill dense 24B payé sur TOUT le
+  contexte à chaque tour + décodage 3× plus lent jusqu'à la fin de la
+  première phrase. Le bench mono-tour à contexte court (TTFT 0,27 s) ne
+  pouvait pas le voir. **Leçon de protocole : tout futur bench LLM vocal
+  doit inclure un tour à contexte long (~10 k chars).** Le MoE à 3,3 B
+  actifs est structurellement le bon profil pour ce chemin chaud.
+- **Éviction Ollama corrigée** : les p90 6–7 s de qwen étaient tous des
+  premiers tours de session (rechargement après ~5 min d'idle). Fix :
+  `_preload_llm()` au démarrage du bot épingle le modèle en mémoire
+  (`keep_alive:-1` via l'endpoint NATIF `/api/generate` — l'endpoint
+  OpenAI-compat traduit mal -1 en TTL 2 h ; vérifié).
+- **Ménage disque** (~94 Go) : supprimés mistral-small3.2, gemma4:26b,
+  gemma4:12b-mlx, qwen3.8:27b et 27b-mlx, muse-glimmer GGUF. Gardés, rôle
+  documenté : qwen3.6-nvfp4 (retest prochaine release Ollama), nemotron
+  (candidat worker delegate), muse-glimmer:30b-nvfp4-dflash (piste caméra).
+
 ## Incidents (à ne pas reproduire)
 
 - **13/08 : profil vocal réel détruit par un test.** La migration du profil

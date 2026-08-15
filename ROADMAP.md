@@ -20,9 +20,14 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   (le profil apprend la voix lointaine/douce en cours d'usage).
 - **2026-08-15** — `temperature` 0,2 par défaut dans bot.py (env
   `LLM_TEMPERATURE`) : fiabilité web_search 14/15 contre ~60 % à temp 1
-  (mesures dans `docs/DECISIONS.md`). **A/B en cours** : bot relancé avec
-  `LLM_MODEL=mistral-small3.2 LLM_REASONING_EFFORT=` (vide — pas de knob
-  reasoning chez Mistral). Retour au titulaire = relancer sans ces env.
+  (mesures dans `docs/DECISIONS.md`).
+- **2026-08-15** — **A/B tranché : qwen confirmé.** mistral-small3.2 recalé
+  sur données de production (médiane 1,54 s vs 0,49 s jusqu'à la première
+  phrase, croissant avec le contexte — prefill dense). Verdict et leçon de
+  protocole dans `docs/DECISIONS.md`. Modèles éliminés supprimés du disque.
+- **2026-08-15** — **Cold start Ollama corrigé** : `_preload_llm()` au
+  démarrage épingle le modèle (`keep_alive:-1`, endpoint natif) — plus de
+  rechargement de 6–7 s au premier tour d'une session.
 
 ## À faire (par ordre de valeur estimée)
 
@@ -55,9 +60,8 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 - **Épingler les dépendances** : `requirements.txt` est sans versions (sauf
   pipecat ≥1.3.0) alors que bot.py monkeypatche des internals Pipecat — un
   `pip install -U` peut casser la voix en silence.
-- **Cold start Ollama** : aucun `OLLAMA_KEEP_ALIVE` (vérifié : modèle déchargé
-  après idle) → 10–20 s de reload sur la première question. `-1` ou
-  `keep_alive` par requête.
+- ~~Cold start Ollama~~ **fait 15/08** (`_preload_llm()` dans bot.py,
+  `keep_alive:-1` via l'endpoint natif au démarrage).
 - **Contexte 262 K** : le KV cache du 35B est dimensionné pour 262 144 tokens
   (~28 Go résidents pour un fichier de 18 Go). 16–32 K libèrent ~8–10 Go ;
   re-vérifier le TTFT avec `tools/bench_ttft.py`.
@@ -98,15 +102,14 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 - ~~Fixer `temperature` ≈ 0,2 dans bot.py~~ **fait 15/08** (`LLM_TEMPERATURE`,
   défaut 0,2). Reste : vérifier à l'oreille que le ton ne devient pas
   monotone ; sinon monter à 0,3–0,4.
-- **LLM, A/B — bench fait 15/08, finale : qwen vs mistral-small3.2.**
-  Nemotron 3.5 (invente la météo, vouvoie), Muse Glimmer (TTFT 2,4–5 s) et
-  Gemma 4 26B (thinking non désactivable, outils 10/18) éliminés — détails
-  dans `docs/DECISIONS.md`. Reste à faire : une semaine d'usage réel avec
-  `LLM_MODEL=mistral-small3.2` (18/18 outils, TTFT 0,27 s, français très
-  naturel), juger le ton à l'oreille. Nemotron à retenir comme candidat
-  worker de fond (delegate), Muse Glimmer pour une future caméra. Seconde
-  vague 15/08 (variantes MLX, qwen3.8:27b, gemma4:12b-mlx) : la finale ne
-  change pas — détails dans `docs/DECISIONS.md`.
+- ~~LLM, A/B~~ **clos 15/08 : qwen3.6:35b-a3b confirmé titulaire** après
+  deux vagues de bench (7 challengers) et un A/B en production perdu par
+  mistral-small3.2 sur la latence à contexte long (prefill dense). Tout est
+  dans `docs/DECISIONS.md`, y compris la leçon de protocole (bench vocal =
+  inclure un tour à ~10 k chars de contexte). Restent sur disque avec un
+  rôle : nemotron (candidat worker delegate), muse-glimmer nvfp4-dflash
+  (piste caméra), qwen3.6-nvfp4 (retest prochaine release Ollama). À
+  surveiller : un MoE de la génération qwen3.8.
 - **STT** : jeu de test personnel de ~20 énoncés depuis transcripts.db, puis
   Parakeet v3 (parakeet-mlx) ; Kyutai STT (streaming fr) = upgrade stratégique
   (barge-in instantané), à faire avec son TTS.

@@ -422,6 +422,28 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     await runner.run()
 
 
+def _preload_llm():
+    """Pin the model in Ollama's memory (keep_alive -1) so no turn ever pays
+    the 6-20s idle-eviction reload. Ollama-only: the OpenAI-compat endpoint
+    mishandles keep_alive:-1 (yields a 2h TTL), the native one is correct.
+    No-op for non-Ollama backends (Hermes via LLM_BASE_URL override)."""
+    if ":11434" not in LLM_BASE_URL:
+        return
+    import json as _json
+    import urllib.request
+    native = LLM_BASE_URL.rsplit("/v1", 1)[0] + "/api/generate"
+    try:
+        req = urllib.request.Request(
+            native,
+            data=_json.dumps({"model": LLM_MODEL, "keep_alive": -1}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=120).read()
+        logger.info(f"LLM preloaded and pinned in memory: {LLM_MODEL}")
+    except Exception as e:
+        logger.warning(f"LLM preload failed (first turn will pay the load): {e}")
+
+
 app = FastAPI()
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -468,6 +490,7 @@ async def health():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    asyncio.get_running_loop().run_in_executor(None, _preload_llm)
     yield
     coros = [pc.disconnect() for pc in pcs_map.values()]
     await asyncio.gather(*coros)
