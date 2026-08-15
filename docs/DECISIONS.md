@@ -166,6 +166,29 @@ comportement en contexte long, 32 K seulement sur le tag de base). Les
 réponses françaises complètes des cinq modèles sont dans l'artifact de
 session et le tmp du job Claude (`challenger_report.md`).
 
+## 2026-08-15 — Seconde vague : variantes MLX et nouveaux tags
+
+Même protocole. Questions posées : MLX sauve-t-il muse-glimmer ? qwen3.8:27b
+(nouvelle génération, dense+vision) ? gemma4:12b plus raisonnable que le 26b ?
+
+- **muse-glimmer:30b-nvfp4-dflash** (sa variante la plus rapide possible) :
+  TTFT médian 2,29 s contre 2,94 s en GGUF. Même le meilleur cas reste ~8×
+  trop lent pour la voix → **élimination définitive**, inutile de tester les
+  variantes intermédiaires.
+- **qwen3.8:27b** : GGUF 0,95 s / 23 tok/s / 14/18 ; **MLX 0,51 s / 23 tok/s
+  / 16/18**. `reasoning_effort` fonctionne (même famille). Dominé par les
+  deux finalistes sur tous les axes ; interroge (« quelle ville ? », « quel
+  match ? ») au lieu de chercher. Notable : le quant MLX n'a PAS régressé en
+  outils ici — la leçon nvfp4 du 14/08 est propre au couple modèle/quant,
+  pas au moteur MLX.
+- **gemma4:12b-mlx** : surprise, `reasoning_effort:"none"` est ACCEPTÉ sur ce
+  build (contrairement au 26b) → TTFT 0,23 s, 45 tok/s, zéro fuite de
+  raisonnement — le plus rapide des challengers. Mais **outils 10/18**, même
+  pattern que le 26b (oublie `type:"news"`, demande la ville/le match au
+  lieu de chercher). Rapide mais indiscipliné : éliminé.
+- **La finale reste qwen3.6:35b-a3b vs mistral-small3.2.** À surveiller : un
+  éventuel MoE de la génération qwen3.8 (seul le 27b dense existe à ce jour).
+
 ## Incidents (à ne pas reproduire)
 
 - **13/08 : profil vocal réel détruit par un test.** La migration du profil

@@ -100,7 +100,9 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   dans `docs/DECISIONS.md`. Reste à faire : une semaine d'usage réel avec
   `LLM_MODEL=mistral-small3.2` (18/18 outils, TTFT 0,27 s, français très
   naturel), juger le ton à l'oreille. Nemotron à retenir comme candidat
-  worker de fond (delegate), Muse Glimmer pour une future caméra.
+  worker de fond (delegate), Muse Glimmer pour une future caméra. Seconde
+  vague 15/08 (variantes MLX, qwen3.8:27b, gemma4:12b-mlx) : la finale ne
+  change pas — détails dans `docs/DECISIONS.md`.
 - **STT** : jeu de test personnel de ~20 énoncés depuis transcripts.db, puis
   Parakeet v3 (parakeet-mlx) ; Kyutai STT (streaming fr) = upgrade stratégique
   (barge-in instantané), à faire avec son TTS.
