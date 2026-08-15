@@ -18,6 +18,11 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
 - **2026-08-14** — Top-up d'inscription (`voice_profile.py enroll <nom>` sur un
   profil complet ajoute de la diversité) + adaptation confirmée par l'ancre
   (le profil apprend la voix lointaine/douce en cours d'usage).
+- **2026-08-15** — `temperature` 0,2 par défaut dans bot.py (env
+  `LLM_TEMPERATURE`) : fiabilité web_search 14/15 contre ~60 % à temp 1
+  (mesures dans `docs/DECISIONS.md`). **A/B en cours** : bot relancé avec
+  `LLM_MODEL=mistral-small3.2 LLM_REASONING_EFFORT=` (vide — pas de knob
+  reasoning chez Mistral). Retour au titulaire = relancer sans ces env.
 
 ## À faire (par ordre de valeur estimée)
 
@@ -90,10 +95,9 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   mesuré : TTFT médian 0,09 s vs 0,33 s mais régression tool-call (9/15 vs
   14/15 à temp 0,2, un refus déterministe). Détails dans `docs/DECISIONS.md`.
   Re-tester à la prochaine release Ollama ; variante `-mtp` jamais essayée.
-- **Fixer `temperature` ≈ 0,2 dans bot.py** (mesuré 14/08 : à temp 1 — le
-  défaut actuel — le modèle saute web_search ~40 % du temps sur l'actualité ;
-  à 0,2 : 14/15, zéro appel parasite). Vérifier à l'oreille que le ton ne
-  devient pas monotone ; sinon 0,3–0,4.
+- ~~Fixer `temperature` ≈ 0,2 dans bot.py~~ **fait 15/08** (`LLM_TEMPERATURE`,
+  défaut 0,2). Reste : vérifier à l'oreille que le ton ne devient pas
+  monotone ; sinon monter à 0,3–0,4.
 - **LLM, A/B — bench fait 15/08, finale : qwen vs mistral-small3.2.**
   Nemotron 3.5 (invente la météo, vouvoie), Muse Glimmer (TTFT 2,4–5 s) et
   Gemma 4 26B (thinking non désactivable, outils 10/18) éliminés — détails

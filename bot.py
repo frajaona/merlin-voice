@@ -123,6 +123,11 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "ollama")
 # Qwen3 thinking mode adds 15-50s of silent reasoning before the first spoken
 # token — must stay off in the voice hot path. Empty string = don't send.
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "none")
+# Low temperature is a tool-call reliability requirement, not a style choice:
+# at the model-card default (1.0) web_search is skipped ~40% of the time on
+# news-type questions; at 0.2 it fires 14/15 with zero spurious calls
+# (measured 2026-08-14, docs/DECISIONS.md).
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 TTS_VOICE = os.getenv("TTS_VOICE", "ff_siwis")
 
 SYSTEM_PROMPT = """Tu es Merlin, un assistant personnel intelligent et chaleureux. Tu réponds toujours en français et tu tutoies l'utilisateur.
@@ -322,7 +327,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         base_url=LLM_BASE_URL,
         model=LLM_MODEL,
         settings=OpenAILLMService.Settings(
-            extra={"reasoning_effort": LLM_REASONING_EFFORT} if LLM_REASONING_EFFORT else {},
+            extra={"temperature": LLM_TEMPERATURE}
+            | ({"reasoning_effort": LLM_REASONING_EFFORT} if LLM_REASONING_EFFORT else {}),
         ),
     )
 
