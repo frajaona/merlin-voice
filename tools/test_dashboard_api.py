@@ -1,0 +1,106 @@
+"""Offline tests for dashboard_api: token auth + workshop endpoints.
+
+Run: venv/bin/python tools/test_dashboard_api.py
+
+Uses Starlette's TestClient on a minimal app (no pipecat import, no bot).
+All file paths are redirected to a temp dir — never touches data/.
+"""
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
+
+import dashboard_api
+import skill_admin
+import workshop
+
+
+def make_client(tmp: Path, monkeypatched_promote):
+    dashboard_api._token = "secret-test-token"
+    workshop.REQUESTS_FILE = tmp / "feature-requests.jsonl"
+    workshop.LOG_FILE = tmp / "workshop.log"
+    skill_admin.READY_FILE = tmp / "skill-ready.jsonl"
+    skill_admin.promote = monkeypatched_promote
+
+    app = FastAPI()
+    app.include_router(dashboard_api.router)
+
+    @app.post("/api/offer", dependencies=[Depends(dashboard_api.require_token)])
+    async def offer():
+        return {"ok": True}
+
+    return TestClient(app)
+
+
+def auth(token="secret-test-token"):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_auth():
+    with tempfile.TemporaryDirectory() as tmp:
+        client = make_client(Path(tmp), lambda slug: Path(f"plugins/{slug}.py"))
+        # No token, wrong token, wrong scheme -> 401; right token -> 200
+        assert client.post("/api/offer").status_code == 401
+        assert client.post("/api/offer", headers=auth("wrong")).status_code == 401
+        assert client.post("/api/offer", headers={"Authorization": "secret-test-token"}).status_code == 401
+        assert client.post("/api/offer", headers=auth()).status_code == 200
+        assert client.get("/api/workshop").status_code == 401
+        assert client.get("/api/workshop", headers=auth()).status_code == 200
+    print("ok: token auth")
+
+
+def test_workshop_state():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        client = make_client(tmp, lambda slug: Path(f"plugins/{slug}.py"))
+        workshop.REQUESTS_FILE.write_text(
+            json.dumps({"capability": "test", "status": "built", "slug": "test_skill"}) + "\n",
+            encoding="utf-8",
+        )
+        workshop.LOG_FILE.write_text("line1\nline2\n", encoding="utf-8")
+        data = client.get("/api/workshop", headers=auth()).json()
+        assert data["requests"][0]["slug"] == "test_skill"
+        assert data["log"] == ["line1", "line2"]
+        assert isinstance(data["active"], list) and "web_search" in data["active"]
+    print("ok: workshop state")
+
+
+def test_approve():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        promoted = []
+
+        def fake_promote(slug):
+            promoted.append(slug)
+            return Path(f"plugins/{slug}.py")
+
+        client = make_client(tmp, fake_promote)
+        skill_admin.READY_FILE.write_text(
+            json.dumps({"slug": "good_skill", "capability": "x"}) + "\n", encoding="utf-8"
+        )
+        # Bad slug syntax, unknown slug -> rejected before promote
+        assert client.post("/api/workshop/approve", headers=auth(),
+                           json={"slug": "../evil"}).status_code == 400
+        assert client.post("/api/workshop/approve", headers=auth(),
+                           json={"slug": "not_built"}).status_code == 404
+        assert promoted == []
+        # Gate-passed slug -> promoted
+        resp = client.post("/api/workshop/approve", headers=auth(), json={"slug": "good_skill"})
+        assert resp.status_code == 200 and resp.json()["ok"] is True
+        assert promoted == ["good_skill"]
+        # No token -> untouched
+        assert client.post("/api/workshop/approve", json={"slug": "good_skill"}).status_code == 401
+        assert promoted == ["good_skill"]
+    print("ok: approve endpoint")
+
+
+if __name__ == "__main__":
+    test_auth()
+    test_workshop_state()
+    test_approve()
+    print("all dashboard_api tests passed")

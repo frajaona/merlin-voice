@@ -16,9 +16,11 @@ from typing import Dict
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+
+from dashboard_api import get_token, require_token, router as workshop_router
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
@@ -33,6 +35,10 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
+)
+from pipecat.processors.frameworks.rtvi import (
+    RTVIFunctionCallReportLevel,
+    RTVIObserverParams,
 )
 from pipecat.turns.types import ProcessFrameResult
 from pipecat.turns.user_start import MinWordsUserTurnStartStrategy
@@ -439,7 +445,16 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         aggregators.assistant(),
     ])
 
-    worker = PipelineWorker(pipeline, enable_rtvi=False)
+    # RTVI feeds the dashboard over the data channel: transcriptions, bot
+    # text, speaking state, tool calls (FULL = args + results — LAN behind
+    # the shared token, and the plugins are household tools, not secrets),
+    # plus the custom gate-decision messages pushed by VoiceGate.
+    worker = PipelineWorker(
+        pipeline,
+        rtvi_observer_params=RTVIObserverParams(
+            function_call_report_level={"*": RTVIFunctionCallReportLevel.FULL},
+        ),
+    )
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, connection):
@@ -488,7 +503,7 @@ async def index():
     return FileResponse("static/index.html")
 
 
-@app.post("/api/offer")
+@app.post("/api/offer", dependencies=[Depends(require_token)])
 async def offer(request: dict, background_tasks: BackgroundTasks):
     pc_id = request.get("pc_id")
 
@@ -521,8 +536,13 @@ async def health():
     return {"status": "ok", "connections": len(pcs_map)}
 
 
+app.include_router(workshop_router)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    get_token()  # generate data/auth-token at first startup
+    logger.info("dashboard auth: Bearer token from MERLIN_TOKEN or data/auth-token")
     asyncio.get_running_loop().run_in_executor(None, _preload_llm)
     yield
     coros = [pc.disconnect() for pc in pcs_map.values()]

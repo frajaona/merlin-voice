@@ -27,6 +27,10 @@ engine). Tool plugins auto-load from `plugins/*.py`.
 ## Ops
 
 - Run: `venv/bin/python bot.py` (HTTPS :7860, cert.pem/key.pem).
+- Dashboard: `https://<host>:7860/` (vanilla JS, RTVI sur le data channel).
+  Auth : Bearer token (`data/auth-token` ou `MERLIN_TOKEN`) exigé sur
+  `/api/offer` et `/api/workshop*` (`dashboard_api.py`). Sonde protocole :
+  `tools/probe_rtvi.py` (bot lancé requis).
 - Restart: kill by port PID — `kill $(lsof -tnP -iTCP:7860 -sTCP:LISTEN)`,
   wait for the port to free, force-kill if needed, then start. Do NOT
   `pkill -f "python bot.py"` (macOS process name is capital-P `Python`; a

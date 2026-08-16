@@ -6,106 +6,334 @@
   <title>Merlin</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: #0f0f0f;
-      color: #f0f0f0;
-      font-family: -apple-system, sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100dvh;
-      gap: 32px;
-      padding: 24px;
+    :root {
+      --bg: #0f0f0f;
+      --panel: #171717;
+      --border: #262626;
+      --text: #e8e8e8;
+      --muted: #7a7a7a;
+      --faint: #4a4a4a;
+      --blue: #4a90d9;
+      --pink: #d94a90;
+      --green: #4ad98e;
+      --red: #d95a4a;
+      --amber: #d9a94a;
     }
-    h1 { font-size: 2rem; font-weight: 300; letter-spacing: 0.1em; color: #aaa; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, "Segoe UI", sans-serif;
+      min-height: 100dvh;
+    }
+    header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; background: var(--bg); z-index: 5;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 300; letter-spacing: 0.15em; color: #bbb; }
+    #conn-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--faint); transition: background 0.3s;
+    }
+    #conn-dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    header .spacer { flex: 1; }
+    #btn-token {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 8px; padding: 4px 10px; font-size: 0.75rem; cursor: pointer;
+    }
+
+    main {
+      display: grid; gap: 14px; padding: 14px;
+      grid-template-columns: 1fr;
+      max-width: 1400px; margin: 0 auto;
+    }
+    @media (min-width: 960px) {
+      main {
+        grid-template-columns: 5fr 4fr;
+        grid-template-areas:
+          "voice   gate"
+          "convo   gate"
+          "convo   tools"
+          "convo   workshop";
+        align-items: start;
+      }
+      #panel-voice    { grid-area: voice; }
+      #panel-convo    { grid-area: convo; }
+      #panel-gate     { grid-area: gate; }
+      #panel-tools    { grid-area: tools; }
+      #panel-workshop { grid-area: workshop; }
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    section h2 {
+      font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+    }
+
+    /* ---- voice panel ---- */
+    #panel-voice { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 22px 14px; }
     #orb {
-      width: 120px; height: 120px;
-      border-radius: 50%;
-      background: radial-gradient(circle at 35% 35%, #4a90d9, #1a1a4e);
-      box-shadow: 0 0 40px rgba(74, 144, 217, 0.3);
-      cursor: pointer;
-      transition: transform 0.2s, box-shadow 0.2s;
+      width: 104px; height: 104px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #3a3a3a, #1c1c1c);
       display: flex; align-items: center; justify-content: center;
-      font-size: 2.5rem;
+      font-size: 2.2rem; cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s, background 0.4s;
     }
     #orb.listening {
+      background: radial-gradient(circle at 35% 35%, #4a90d9, #1a1a4e);
+      box-shadow: 0 0 50px rgba(74, 144, 217, 0.5);
       animation: pulse 1.5s ease-in-out infinite;
-      box-shadow: 0 0 60px rgba(74, 144, 217, 0.6);
     }
     #orb.speaking {
       background: radial-gradient(circle at 35% 35%, #d94a90, #4e1a3a);
-      box-shadow: 0 0 60px rgba(217, 74, 144, 0.6);
+      box-shadow: 0 0 50px rgba(217, 74, 144, 0.6);
       animation: pulse 0.8s ease-in-out infinite;
     }
+    #orb.user-speaking { outline: 3px solid rgba(74, 217, 142, 0.65); outline-offset: 4px; }
     @keyframes pulse {
       0%, 100% { transform: scale(1); }
-      50% { transform: scale(1.08); }
+      50% { transform: scale(1.07); }
     }
-    #status {
-      font-size: 0.9rem;
-      color: #666;
-      text-align: center;
-      min-height: 1.4em;
-      transition: color 0.3s;
-    }
-    #status.active { color: #4a90d9; }
-    #transcript {
-      font-size: 1rem;
-      color: #888;
-      text-align: center;
-      max-width: 320px;
-      min-height: 3em;
-      font-style: italic;
-    }
+    #status { font-size: 0.85rem; color: var(--muted); min-height: 1.3em; text-align: center; }
+    #status.active { color: var(--blue); }
     #btn-disconnect {
-      background: transparent;
-      border: 1px solid #333;
-      color: #555;
-      padding: 10px 24px;
-      border-radius: 24px;
-      cursor: pointer;
-      font-size: 0.85rem;
+      background: transparent; border: 1px solid var(--border); color: var(--muted);
+      padding: 7px 18px; border-radius: 20px; cursor: pointer; font-size: 0.8rem;
       display: none;
     }
-    #btn-disconnect:hover { border-color: #555; color: #888; }
     audio { display: none; }
+
+    /* ---- conversation ---- */
+    #convo { display: flex; flex-direction: column; gap: 8px; max-height: 60dvh; overflow-y: auto; }
+    .bubble {
+      max-width: 88%; padding: 8px 12px; border-radius: 12px;
+      font-size: 0.92rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
+    }
+    .bubble.user { align-self: flex-end; background: #1e2c3d; border: 1px solid #2a3f57; }
+    .bubble.bot  { align-self: flex-start; background: #221822; border: 1px solid #3a2436; }
+    .bubble .who {
+      display: block; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em;
+      text-transform: uppercase; margin-bottom: 3px;
+    }
+    .bubble.user .who { color: var(--blue); }
+    .bubble.bot .who { color: var(--pink); }
+    .filtered {
+      align-self: stretch; font-size: 0.78rem; color: var(--faint);
+      padding: 2px 6px; font-style: italic;
+    }
+    .filtered .why { color: #5f4a3a; }
+    #convo:empty::after, #gate-feed:empty::after, #tools:empty::after {
+      content: attr(data-empty); color: var(--faint); font-size: 0.82rem; font-style: italic;
+    }
+
+    /* ---- gate feed ---- */
+    #gate-feed { display: flex; flex-direction: column; gap: 6px; max-height: 40dvh; overflow-y: auto; }
+    .gate-entry {
+      display: grid; grid-template-columns: auto 1fr; gap: 3px 8px;
+      font-size: 0.8rem; padding: 6px 8px; border-radius: 8px; background: #131313;
+      border-left: 3px solid var(--faint);
+    }
+    .gate-entry.ok { border-left-color: var(--green); }
+    .gate-entry.ko { border-left-color: var(--red); }
+    .gate-entry .verdict { font-weight: 700; }
+    .gate-entry.ok .verdict { color: var(--green); }
+    .gate-entry.ko .verdict { color: var(--red); }
+    .gate-entry .text { color: var(--text); grid-column: 2; }
+    .gate-entry .reason { color: var(--muted); grid-column: 2; font-size: 0.74rem; }
+    .gate-entry .time { color: var(--faint); font-size: 0.7rem; }
+
+    /* ---- tools ---- */
+    #tools { display: flex; flex-direction: column; gap: 8px; max-height: 34dvh; overflow-y: auto; }
+    .tool-card {
+      background: #131313; border: 1px solid var(--border); border-radius: 10px;
+      padding: 8px 10px; font-size: 0.8rem;
+    }
+    .tool-card .name { font-weight: 600; color: var(--amber); font-family: ui-monospace, monospace; }
+    .tool-card .state { float: right; font-size: 0.72rem; color: var(--muted); }
+    .tool-card .state.running { color: var(--blue); }
+    .tool-card .state.done { color: var(--green); }
+    .tool-card .state.cancelled { color: var(--red); }
+    .tool-card pre {
+      margin-top: 6px; font-size: 0.7rem; color: var(--muted);
+      white-space: pre-wrap; word-break: break-word; max-height: 9em; overflow-y: auto;
+      font-family: ui-monospace, monospace;
+    }
+
+    /* ---- workshop ---- */
+    #ws-active { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .chip {
+      font-size: 0.7rem; font-family: ui-monospace, monospace;
+      background: #14201a; color: var(--green); border: 1px solid #1f3a2c;
+      border-radius: 999px; padding: 2px 9px;
+    }
+    #ws-requests { display: flex; flex-direction: column; gap: 8px; }
+    .ws-item {
+      background: #131313; border: 1px solid var(--border); border-radius: 10px;
+      padding: 9px 11px; font-size: 0.85rem;
+      display: flex; flex-direction: column; gap: 5px;
+    }
+    .ws-item .head { display: flex; align-items: baseline; gap: 8px; }
+    .ws-item .capability { flex: 1; }
+    .badge {
+      font-size: 0.66rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+      border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+    }
+    .badge.pending  { background: #262626; color: var(--muted); }
+    .badge.building { background: #2c2416; color: var(--amber); animation: blink 1.2s ease-in-out infinite; }
+    .badge.built    { background: #14251c; color: var(--green); }
+    .badge.failed   { background: #2b1512; color: var(--red); }
+    .badge.actif    { background: #142025; color: var(--blue); }
+    @keyframes blink { 50% { opacity: 0.45; } }
+    .ws-item .meta { font-size: 0.7rem; color: var(--faint); font-family: ui-monospace, monospace; }
+    .btn-approve {
+      align-self: flex-start;
+      background: #14251c; color: var(--green); border: 1px solid #1f3a2c;
+      border-radius: 8px; padding: 5px 14px; font-size: 0.78rem; cursor: pointer;
+    }
+    .btn-approve.armed { background: #2c2416; color: var(--amber); border-color: #4a3c1f; }
+    .btn-approve:disabled { opacity: 0.5; cursor: default; }
+    #ws-log summary { font-size: 0.72rem; color: var(--faint); cursor: pointer; margin-top: 10px; }
+    #ws-log pre {
+      font-size: 0.66rem; color: var(--muted); font-family: ui-monospace, monospace;
+      white-space: pre-wrap; word-break: break-word; max-height: 12em; overflow-y: auto;
+      margin-top: 6px; background: #101010; padding: 8px; border-radius: 8px;
+    }
+    #ws-error { font-size: 0.78rem; color: var(--red); margin-top: 6px; }
+
+    /* ---- token overlay ---- */
+    #token-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 20;
+      display: none; align-items: center; justify-content: center; padding: 20px;
+    }
+    #token-overlay.show { display: flex; }
+    #token-box {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+      padding: 22px; width: 100%; max-width: 380px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    #token-box p { font-size: 0.85rem; color: var(--muted); line-height: 1.45; }
+    #token-box code { color: var(--text); font-size: 0.78rem; }
+    #token-input {
+      background: #101010; border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 9px 11px; font-size: 0.9rem; font-family: ui-monospace, monospace;
+    }
+    #token-save {
+      background: var(--blue); color: #0c1620; font-weight: 600; border: none;
+      border-radius: 8px; padding: 9px; font-size: 0.9rem; cursor: pointer;
+    }
+    #token-error { color: var(--red); font-size: 0.78rem; min-height: 1em; }
   </style>
 </head>
 <body>
-  <h1>Merlin</h1>
-  <div id="orb">🎙</div>
-  <div id="status">Appuie pour commencer</div>
-  <div id="transcript"></div>
-  <button id="btn-disconnect">Déconnecter</button>
-  <!-- No `muted` attribute: it's boolean, muted="false" still mutes -->
-  <audio id="audio" autoplay playsinline></audio>
+  <header>
+    <div id="conn-dot"></div>
+    <h1>MERLIN</h1>
+    <div class="spacer"></div>
+    <button id="btn-token">token</button>
+  </header>
+
+  <main>
+    <section id="panel-voice">
+      <div id="orb">🎙</div>
+      <div id="status">Appuie pour te connecter</div>
+      <button id="btn-disconnect">Déconnecter</button>
+      <!-- No `muted` attribute: it's boolean, muted="false" still mutes -->
+      <audio id="audio" autoplay playsinline></audio>
+    </section>
+
+    <section id="panel-convo">
+      <h2>Conversation</h2>
+      <div id="convo" data-empty="Aucun échange pour l'instant."></div>
+    </section>
+
+    <section id="panel-gate">
+      <h2>Décisions du gate</h2>
+      <div id="gate-feed" data-empty="Les décisions du VoiceGate s'afficheront ici en direct."></div>
+    </section>
+
+    <section id="panel-tools">
+      <h2>Outils</h2>
+      <div id="tools" data-empty="Aucun appel d'outil pour l'instant."></div>
+    </section>
+
+    <section id="panel-workshop">
+      <h2>Atelier</h2>
+      <div id="ws-active"></div>
+      <div id="ws-requests"></div>
+      <div id="ws-error"></div>
+      <details id="ws-log"><summary>journal de l'atelier</summary><pre></pre></details>
+    </section>
+  </main>
+
+  <div id="token-overlay">
+    <div id="token-box">
+      <p>Token d'accès requis. Sur le Mac de Merlin&nbsp;:<br><code>cat data/auth-token</code></p>
+      <input id="token-input" type="password" placeholder="token" autocomplete="off">
+      <div id="token-error"></div>
+      <button id="token-save">Enregistrer</button>
+    </div>
+  </div>
 
   <script>
-    const orb = document.getElementById('orb');
-    const status = document.getElementById('status');
-    const transcript = document.getElementById('transcript');
-    const audio = document.getElementById('audio');
-    const btnDisconnect = document.getElementById('btn-disconnect');
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const orb = $('orb'), statusEl = $('status'), audio = $('audio');
+    const btnDisconnect = $('btn-disconnect'), connDot = $('conn-dot');
+    const convo = $('convo'), gateFeed = $('gate-feed'), toolsEl = $('tools');
 
-    let pc = null;
-    let pcId = null;
-    let connected = false;
+    // ---- token -------------------------------------------------------------
+    // First-time setup on the phone: open https://<host>:7860/#token=XXXX once,
+    // the token is stored and stripped from the URL.
+    if (location.hash.startsWith('#token=')) {
+      localStorage.setItem('merlin_token', decodeURIComponent(location.hash.slice(7)));
+      history.replaceState(null, '', location.pathname);
+    }
+    let token = localStorage.getItem('merlin_token') || '';
+
+    function showTokenPrompt(msg = '') {
+      $('token-error').textContent = msg;
+      $('token-overlay').classList.add('show');
+      $('token-input').focus();
+    }
+    $('btn-token').addEventListener('click', () => showTokenPrompt());
+    $('token-save').addEventListener('click', async () => {
+      token = $('token-input').value.trim();
+      localStorage.setItem('merlin_token', token);
+      const resp = await fetch('/api/workshop', { headers: authHeaders() }).catch(() => null);
+      if (resp && resp.ok) {
+        $('token-overlay').classList.remove('show');
+        refreshWorkshop();
+      } else {
+        showTokenPrompt('Token refusé.');
+      }
+    });
+    $('token-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('token-save').click(); });
+
+    const authHeaders = (extra = {}) => ({ 'Authorization': 'Bearer ' + token, ...extra });
+
+    // ---- WebRTC + RTVI -----------------------------------------------------
+    let pc = null, pcId = null, dc = null, connected = false, pingTimer = null;
 
     function setStatus(text, active = false) {
-      status.textContent = text;
-      status.className = active ? 'active' : '';
+      statusEl.textContent = text;
+      statusEl.className = active ? 'active' : '';
     }
-
     function setOrb(state) {
-      orb.className = state;
+      const userSpeaking = orb.classList.contains('user-speaking');
+      orb.className = state + (userSpeaking ? ' user-speaking' : '');
       orb.textContent = state === 'speaking' ? '🔊' : '🎙';
     }
 
     async function connect() {
       if (connected) return;
+      if (!token) { showTokenPrompt(); return; }
       setStatus('Connexion...', true);
-
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -117,68 +345,68 @@
 
         pc.ontrack = (e) => {
           if (e.track.kind === 'audio') {
-            const stream = e.streams[0] || new MediaStream([e.track]);
-            audio.srcObject = stream;
+            audio.srcObject = e.streams[0] || new MediaStream([e.track]);
             audio.play().catch(err => console.warn('audio.play():', err));
             setOrb('listening');
-            setStatus('À l\'écoute...', true);
+            setStatus("À l'écoute...", true);
           }
         };
-
         pc.oniceconnectionstatechange = () => {
-          if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
-            disconnect();
-          }
+          if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') disconnect();
         };
 
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
         pc.addTransceiver('audio', { direction: 'recvonly' });
 
-        // Required: Pipecat uses the data channel for control signaling
-        const dc = pc.createDataChannel('pipecat');
-        dc.onmessage = (e) => console.log('Data channel msg:', e.data);
-
+        dc = pc.createDataChannel('pipecat');
+        dc.onmessage = (e) => {
+          let msg;
+          try { msg = JSON.parse(e.data); } catch { return; }
+          if (msg.label === 'rtvi-ai') handleRtvi(msg);
+        };
         // Keep-alive: once the server has received any datachannel message, it
         // treats the connection as DEAD if nothing arrives for 3 seconds and
-        // silently drops all outgoing audio. Ping well under that window.
+        // silently drops all outgoing audio. Raw "ping" is special-cased by the
+        // server and never reaches the RTVI parser.
         dc.onopen = () => {
-          console.log('Data channel open');
           dc.send('ping');
-          setInterval(() => { if (dc.readyState === 'open') dc.send('ping'); }, 1000);
+          pingTimer = setInterval(() => { if (dc.readyState === 'open') dc.send('ping'); }, 1000);
+          dc.send(JSON.stringify({
+            label: 'rtvi-ai', type: 'client-ready', id: 'cr-' + Date.now(),
+            data: { version: '1.4.0', about: { library: 'merlin-dashboard' } },
+          }));
         };
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-
         // Wait for ICE — host-only candidates gather in <100ms on LAN
         await new Promise(resolve => {
           if (pc.iceGatheringState === 'complete') return resolve();
           pc.onicegatheringstatechange = () => {
             if (pc.iceGatheringState === 'complete') resolve();
           };
-          setTimeout(resolve, 500); // max 500ms then send anyway
+          setTimeout(resolve, 500);
         });
 
-        const resp = await fetch(`${window.location.origin}/api/offer`, {
+        const resp = await fetch('/api/offer', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sdp: pc.localDescription.sdp,
-            type: pc.localDescription.type,
-            pc_id: pcId,
-          }),
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, pc_id: pcId }),
         });
-
+        if (resp.status === 401) {
+          disconnect();
+          showTokenPrompt('Token refusé.');
+          return;
+        }
         const answer = await resp.json();
         pcId = answer.pc_id;
-
         await pc.setRemoteDescription({ sdp: answer.sdp, type: answer.type });
 
         connected = true;
+        connDot.classList.add('on');
         btnDisconnect.style.display = 'block';
         setStatus('Connecté — parle maintenant', true);
         setOrb('listening');
-
       } catch (err) {
         console.error(err);
         setStatus('Erreur: ' + err.message);
@@ -187,14 +415,18 @@
     }
 
     function disconnect() {
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
       if (pc) { pc.close(); pc = null; }
+      dc = null;
       audio.srcObject = null;
       connected = false;
       pcId = null;
+      connDot.classList.remove('on');
       btnDisconnect.style.display = 'none';
-      setStatus('Appuie pour commencer');
-      setOrb('');
+      setStatus('Appuie pour te connecter');
+      orb.className = '';
       orb.textContent = '🎙';
+      botBubble = null;
     }
 
     orb.addEventListener('click', () => {
@@ -205,8 +437,244 @@
         connect();
       }
     });
-
     btnDisconnect.addEventListener('click', disconnect);
+
+    // ---- RTVI dispatch -----------------------------------------------------
+    let botBubble = null;
+
+    function handleRtvi(msg) {
+      const d = msg.data || {};
+      switch (msg.type) {
+        case 'bot-ready':
+          setStatus('Connecté — parle maintenant', true);
+          break;
+        case 'user-started-speaking': orb.classList.add('user-speaking'); break;
+        case 'user-stopped-speaking': orb.classList.remove('user-speaking'); break;
+        case 'bot-started-speaking': if (connected) setOrb('speaking'); break;
+        case 'bot-stopped-speaking':
+          if (connected) setOrb('listening');
+          botBubble = null;
+          break;
+        case 'server-message':
+          if (d.event === 'gate-decision') onGateDecision(d);
+          break;
+        case 'bot-tts-text':
+          appendBotText(d.text || '');
+          break;
+        case 'llm-function-call-in-progress': onToolStart(d); break;
+        case 'llm-function-call-stopped': onToolStop(d); break;
+      }
+    }
+
+    function scrolledToBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 60; }
+    function autoscroll(el, stick) { if (stick) el.scrollTop = el.scrollHeight; }
+
+    function onGateDecision(d) {
+      // Gate feed (newest first)
+      const stick = scrolledToBottom(gateFeed);
+      const entry = document.createElement('div');
+      entry.className = 'gate-entry ' + (d.accepted ? 'ok' : 'ko');
+      const verdict = document.createElement('span');
+      verdict.className = 'verdict';
+      verdict.textContent = d.accepted ? '✓' : '✕';
+      const text = document.createElement('span');
+      text.className = 'text';
+      text.textContent = d.text;
+      const reason = document.createElement('span');
+      reason.className = 'reason';
+      reason.textContent = d.reason;
+      const time = document.createElement('span');
+      time.className = 'time';
+      time.textContent = new Date().toLocaleTimeString('fr-FR');
+      entry.append(verdict, text, reason, time);
+      gateFeed.appendChild(entry);
+      while (gateFeed.children.length > 80) gateFeed.firstChild.remove();
+      autoscroll(gateFeed, stick);
+
+      // Conversation
+      const cstick = scrolledToBottom(convo);
+      if (d.accepted) {
+        const b = document.createElement('div');
+        b.className = 'bubble user';
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = d.speaker || 'inconnu';
+        b.appendChild(who);
+        b.append(d.text);
+        convo.appendChild(b);
+        botBubble = null; // next bot text starts a fresh bubble
+      } else {
+        const f = document.createElement('div');
+        f.className = 'filtered';
+        f.append('✕ ' + d.text + ' ');
+        const why = document.createElement('span');
+        why.className = 'why';
+        why.textContent = '— ' + d.reason;
+        f.appendChild(why);
+        convo.appendChild(f);
+      }
+      autoscroll(convo, cstick);
+    }
+
+    function appendBotText(text) {
+      if (!text.trim()) return;
+      const stick = scrolledToBottom(convo);
+      if (!botBubble) {
+        botBubble = document.createElement('div');
+        botBubble.className = 'bubble bot';
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = 'Merlin';
+        botBubble.appendChild(who);
+        botBubble.appendChild(document.createTextNode(''));
+        convo.appendChild(botBubble);
+      }
+      const node = botBubble.lastChild;
+      node.textContent += (node.textContent ? ' ' : '') + text.trim();
+      autoscroll(convo, stick);
+    }
+
+    // ---- tool cards ----------------------------------------------------------
+    const toolCards = new Map(); // tool_call_id -> card element
+
+    function onToolStart(d) {
+      if (!d.tool_call_id || toolCards.has(d.tool_call_id)) return;
+      const card = document.createElement('div');
+      card.className = 'tool-card';
+      const state = document.createElement('span');
+      state.className = 'state running';
+      state.textContent = 'en cours…';
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = d.function_name || '?';
+      card.append(state, name);
+      if (d.arguments && Object.keys(d.arguments).length) {
+        const pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(d.arguments, null, 1);
+        card.appendChild(pre);
+      }
+      toolsEl.appendChild(card);
+      while (toolsEl.children.length > 20) toolsEl.firstChild.remove();
+      toolCards.set(d.tool_call_id, card);
+      toolsEl.scrollTop = toolsEl.scrollHeight;
+    }
+
+    function onToolStop(d) {
+      const card = toolCards.get(d.tool_call_id);
+      if (!card) return;
+      const state = card.querySelector('.state');
+      state.className = 'state ' + (d.cancelled ? 'cancelled' : 'done');
+      state.textContent = d.cancelled ? 'annulé' : 'terminé';
+      if (!d.cancelled && d.result != null) {
+        const pre = document.createElement('pre');
+        const r = typeof d.result === 'string' ? d.result : JSON.stringify(d.result, null, 1);
+        pre.textContent = r.length > 1200 ? r.slice(0, 1200) + '…' : r;
+        card.appendChild(pre);
+      }
+    }
+
+    // ---- workshop ------------------------------------------------------------
+    const WS_BADGES = {
+      pending:  ['pending',  'en file'],
+      building: ['building', 'construction'],
+      built:    ['built',    'prêt'],
+      failed:   ['failed',   'échec'],
+    };
+    let armedSlug = null, armTimer = null;
+
+    async function refreshWorkshop() {
+      if (!token) return;
+      let data;
+      try {
+        const resp = await fetch('/api/workshop', { headers: authHeaders() });
+        if (resp.status === 401) { showTokenPrompt(); return; }
+        data = await resp.json();
+      } catch { return; } // bot down / network blip — retry on next tick
+      renderWorkshop(data);
+    }
+
+    function renderWorkshop(data) {
+      const active = new Set(data.active || []);
+      const wsActive = $('ws-active');
+      wsActive.replaceChildren(...[...active].map(name => {
+        const c = document.createElement('span');
+        c.className = 'chip';
+        c.textContent = name;
+        return c;
+      }));
+
+      const requests = (data.requests || []).slice().reverse(); // newest first
+      const list = $('ws-requests');
+      list.replaceChildren(...requests.map(r => {
+        const item = document.createElement('div');
+        item.className = 'ws-item';
+        const head = document.createElement('div');
+        head.className = 'head';
+        const cap = document.createElement('span');
+        cap.className = 'capability';
+        cap.textContent = r.capability || '?';
+        const isActive = r.slug && active.has(r.slug);
+        const [cls, label] = isActive ? ['actif', 'actif'] : (WS_BADGES[r.status] || ['pending', r.status]);
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + cls;
+        badge.textContent = label;
+        head.append(cap, badge);
+        item.appendChild(head);
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = [r.slug, r.worker && ('par ' + r.worker), r.built_ts || r.failed_ts || r.ts]
+          .filter(Boolean).join(' · ');
+        item.appendChild(meta);
+        if (r.status === 'built' && r.slug && !isActive) {
+          const btn = document.createElement('button');
+          btn.className = 'btn-approve';
+          btn.textContent = 'Activer';
+          if (armedSlug === r.slug) { btn.classList.add('armed'); btn.textContent = "Confirmer l'activation ?"; }
+          btn.addEventListener('click', () => onApprove(r.slug, btn));
+          item.appendChild(btn);
+        }
+        return item;
+      }));
+
+      $('ws-log').querySelector('pre').textContent = (data.log || []).join('\n');
+    }
+
+    async function onApprove(slug, btn) {
+      $('ws-error').textContent = '';
+      if (armedSlug !== slug) {
+        // Two-tap confirmation instead of a blocking confirm() dialog.
+        armedSlug = slug;
+        btn.classList.add('armed');
+        btn.textContent = "Confirmer l'activation ?";
+        clearTimeout(armTimer);
+        armTimer = setTimeout(() => { armedSlug = null; refreshWorkshop(); }, 5000);
+        return;
+      }
+      clearTimeout(armTimer);
+      armedSlug = null;
+      btn.disabled = true;
+      btn.textContent = 'Activation…';
+      try {
+        const resp = await fetch('/api/workshop/approve', {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ slug }),
+        });
+        const out = await resp.json().catch(() => ({}));
+        if (!resp.ok) $('ws-error').textContent = out.detail || ('Erreur ' + resp.status);
+      } catch (e) {
+        $('ws-error').textContent = 'Erreur réseau: ' + e.message;
+      }
+      refreshWorkshop();
+    }
+
+    setInterval(() => { if (document.visibilityState === 'visible') refreshWorkshop(); }, 5000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') refreshWorkshop();
+    });
+
+    // ---- boot ----------------------------------------------------------------
+    if (token) refreshWorkshop(); else showTokenPrompt();
   </script>
 </body>
 </html>

@@ -51,6 +51,20 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   transitoire, modèle et flags toujours valides). La demande de test ayant
   échoué a été retirée de la file. Détails dans `docs/DECISIONS.md`.
 
+- **2026-08-17** — **Dashboard web + auth de `/api/offer`** (items 7 et Ops
+  « endpoint ouvert »). Auth : token partagé (`MERLIN_TOKEN` ou
+  `data/auth-token` auto-généré, `Authorization: Bearer`) sur `/api/offer`
+  et `/api/workshop*` (`dashboard_api.py`). Dashboard : `static/index.html`
+  réécrit en **vanilla JS sans build** (décision contre le Voice UI Kit
+  React — voir `docs/DECISIONS.md`) — RTVI activé sur le PipelineWorker,
+  panneaux : décisions VoiceGate en direct (`RTVIServerMessageFrame` émis
+  par le gate), transcript attribué, cartes d'outils (report level FULL),
+  file de l'atelier avec activation (POST `/api/workshop/approve`, même
+  preuve de gates que la voix/CLI). Setup téléphone : ouvrir
+  `https://<host>:7860/#token=<token>` une fois. Tests :
+  `tools/test_dashboard_api.py` (offline) ; sonde protocole bout-en-bout :
+  `tools/probe_rtvi.py` (STT→gate→server-message vérifié sur audio réel).
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
@@ -69,12 +83,12 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
 6. **Gating de Whisper hors attention** (privacy + compute) : ne transcrire que
    si l'attention est ouverte ou si le moteur d'éveil vient de tirer. À peser :
    on perdrait la collecte de données STT hors attention.
-7. **Dashboard web (Pipecat Voice UI Kit)** : remplacer `static/index.html`
-   par un client React (kit shadcn) + panneaux alimentés par messages RTVI
-   sur le data channel existant — décisions VoiceGate en direct, transcript
-   attribué, file de l'atelier avec bouton d'approbation, cartes riches pour
-   les outils. **Prérequis : l'auth de `/api/offer`** (item Ops) — pas de
-   bouton « activer du code généré » sur une page LAN ouverte.
+7. **Dashboard riche v2 (mi-terme)** : le dashboard vanilla du 17/08 reste le
+   client du quotidien ; une app plus ambitieuse (React ou autre, avec build)
+   vivra **à côté** (ex. montée sur `/app`), en réutilisant le même contrat :
+   token Bearer, REST `/api/workshop*`, messages RTVI du data channel (dont
+   `server-message`/`gate-decision`). Idées : historique `transcripts.db`,
+   stats du gate par locuteur, replay des tours filtrés, gestion des profils.
 8. **Approbation par réponse iMessage** (entrant) : seulement si l'usage des
    notifications sortantes le justifie — polling de `chat.db` (Full Disk
    Access, schéma fragile) avec vérification du handle expéditeur + slug
@@ -98,8 +112,9 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   TTFT identique (`tools/bench_longctx.py`).
 - ~~Contexte de session non borné~~ **fait 15/08** : `HistoryTrimmer` coupe à
   système + `MERLIN_MAX_HISTORY_MSGS` (40) sans orphaner de résultat d'outil.
-- **Endpoint ouvert** : `/api/offer` sans aucune auth — n'importe qui sur le
-  LAN utilise le GPU. Un token partagé, ou Tailscale.
+- ~~Endpoint ouvert~~ **fait 17/08** : token partagé Bearer sur `/api/offer`
+  et `/api/workshop*` (`dashboard_api.py`, `data/auth-token`). Tailscale
+  reste possible par-dessus pour l'accès hors LAN.
 - **Vrai certificat** (Tailscale serve / mkcert) pour tuer l'avertissement
   du téléphone.
 - **LaunchAgents périmés** : `com.merlin.monitor` + `com.merlin.warmup` et

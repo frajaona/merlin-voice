@@ -306,6 +306,50 @@ skills), et à terme approuver à distance.
   reproduit, envisager un smoke test des workers (prompt « OK ») en tête de
   `process_one`, ou après chaque upgrade des CLI.
 
+## 2026-08-17 — Dashboard : vanilla sans build (Voice UI Kit écarté), token partagé
+
+- **Contexte** : item roadmap « Dashboard web (Pipecat Voice UI Kit) » +
+  prérequis auth de `/api/offer`. Fred a tranché : **vanilla maintenant**,
+  une app plus riche vivra **à côté** à mi-terme.
+- **Client : vanilla JS sans build, pas le Voice UI Kit React.** Raisons :
+  (1) les quatre panneaux voulus (gate, transcript attribué, atelier, cartes
+  d'outils) sont des composants custom dans les deux cas — le kit n'apporte
+  que le bouton connect et un visualiseur ; (2) le protocole RTVI côté client
+  est un `switch` sur du JSON du data channel (vérifié contre
+  `pipecat/processors/frameworks/rtvi/` 1.3.0, protocole 1.4.0) ; (3) zéro
+  toolchain Node dans un dépôt jusque-là sans build ; (4) pas de dérive de
+  version entre `@pipecat-ai/client-js` et pipecat épinglé 1.3.0. **Le choix
+  ne ferme rien** : le contrat (token Bearer, REST `/api/workshop*`, messages
+  RTVI) est le même pour une future app avec build.
+- **Auth : token partagé** (`MERLIN_TOKEN` ou `data/auth-token` auto-généré
+  chmod 600, comparaison `secrets.compare_digest`), en header
+  `Authorization: Bearer` uniquement — jamais en query string (les URLs
+  finissent dans les logs d'accès). La page statique reste publique ; le
+  token ne protège que les actions (offer = GPU, approve = activation de code
+  généré). Tailscale écarté comme *mécanisme* d'auth (dépendance infra,
+  exclut un invité du LAN) mais compatible par-dessus.
+- **Câblage serveur** : RTVI activé sur `PipelineWorker` (l'ex
+  `enable_rtvi=False` datait d'avant le besoin) ; `function_call_report_level`
+  FULL (args + résultats des outils sur le data channel : LAN + token, outils
+  domestiques). Décisions du gate : `VoiceGate` pousse un
+  `RTVIServerMessageFrame` (`{event: "gate-decision", accepted, reason,
+  speaker, text, ts}`) que l'observer RTVI convertit en `server-message` —
+  aucun couplage bot.py↔gate, no-op si RTVI éteint. Le keep-alive `ping` brut
+  du client est court-circuité par la couche connexion SmallWebRTC avant le
+  parseur RTVI (vérifié dans le source) — il reste tel quel.
+- **Approbation dashboard** : `POST /api/workshop/approve` exige la même
+  preuve que la voix/CLI (entrée `skill-ready.jsonl`, donc gates AST + smoke
+  test passés) + slug validé `^[a-z0-9_]{1,40}$`. Confirmation à deux taps
+  côté client (pas de `confirm()` bloquant).
+- **Vérifié bout-en-bout** avec `tools/probe_rtvi.py` (client WebRTC headless
+  aiortc, voix de synthèse macOS `say`) : handshake client-ready→bot-ready,
+  transcription Whisper parfaite, gate-decision reçu sur le data channel
+  (« voix inconnue (sim=0.14) » — rejet attendu d'une voix non inscrite).
+  Tests offline : `tools/test_dashboard_api.py`. Non vérifié : rendu visuel
+  (écran verrouillé pendant la session) — à contrôler à la première ouverture.
+- **Setup d'un appareil** : ouvrir `https://<host>:7860/#token=<token>` une
+  fois (stocké en localStorage, retiré de l'URL). Token : `cat data/auth-token`.
+
 ## Incidents (à ne pas reproduire)
 
 - **13/08 : profil vocal réel détruit par un test.** La migration du profil

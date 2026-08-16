@@ -55,6 +55,7 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frameworks.rtvi.frames import RTVIServerMessageFrame
 from pipecat.services.whisper.stt import WhisperSTTServiceMLX
 from pipecat.transcriptions.language import Language
 from pipecat.utils.time import time_now_iso8601
@@ -641,6 +642,17 @@ class VoiceGate(FrameProcessor):
                 getattr(frame, "speaker_embedding", None),
                 getattr(frame, "speech_secs", 0.0),
             )
+            # Live feed for the dashboard: the RTVI observer converts this
+            # frame into a "server-message" on the data channel. No-op when
+            # RTVI is disabled (the frame just reaches the transport and dies).
+            await self.push_frame(RTVIServerMessageFrame(data={
+                "event": "gate-decision",
+                "accepted": accept,
+                "reason": reason,
+                "speaker": self._core.activator if accept else None,
+                "text": frame.text,
+                "ts": frame.timestamp,
+            }))
             if not accept:
                 logger.info(f"VoiceGate: dropped [{frame.text}] — {reason}")
                 if self._log_fn:
