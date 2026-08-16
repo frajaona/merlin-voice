@@ -240,6 +240,72 @@ Même protocole. Questions posées : MLX sauve-t-il muse-glimmer ? qwen3.8:27b
   aveugle pouvait casser la voix en silence. Procédure de montée de version
   dans le commentaire du fichier.
 
+## 2026-08-16 — Canal texte : iMessage sortant uniquement (WhatsApp écarté)
+
+Besoin : être prévenu hors de portée du micro (cycle de vie de l'atelier de
+skills), et à terme approuver à distance.
+
+- **iMessage retenu pour le sortant** (`notify.py`) : envoi 100 % local via
+  AppleScript (`osascript`, texte passé en argv du handler `on run` — aucun
+  échappement), la famille l'utilise déjà, zéro dépendance. Best-effort par
+  contrat : retourne "sent"/"disabled"/"failed", ne lève jamais, timeout 15 s
+  — une notification ne doit jamais casser un build de l'atelier.
+- **Destinataire dans `data/notify.json`** (git-ignoré : le numéro ne part
+  jamais dans un commit), override env `MERLIN_NOTIFY_IMESSAGE`. Fichier
+  plutôt qu'env seul : l'atelier tourne aussi via cron/spawn où l'env du
+  shell n'existe pas. Non configuré = canal coupé, silencieux.
+- **Piège macOS** : le premier envoi déclenche la demande d'autorisation
+  Automation (contrôler « Messages ») pour le binaire APPELANT — à accorder
+  une fois par contexte (Terminal, process du bot). Test :
+  `venv/bin/python notify.py "coucou"`.
+- **Contexte du bot validé (16/08)** : bot.py tourne orphelin sous launchd
+  (ppid 1, binaire Python.framework) — identité TCC distincte du terminal.
+  Test dans un contexte identique (python du venv orphelin launchd →
+  `notify.py`) : « sent ». La chaîne réelle bot → workshop → notify →
+  osascript a la même ascendance ; les notifications de l'atelier passeront
+  depuis le bot tel qu'il est lancé aujourd'hui.
+- **Piège écran verrouillé (vécu 16/08)** : écran verrouillé, la boîte de
+  consentement Automation ne peut pas s'afficher et l'Apple Event pend
+  jusqu'au timeout (-1712) — même un simple `get accounts` pend. Symptôme :
+  `notify.py` renvoie "failed" alors que tout est bien configuré. Diagnostic :
+  `ioreg -n Root -d1 -a | grep CGSSessionScreenIsLocked` (présent = verrouillé).
+  Une fois l'autorisation accordée (validé 16/08, envoi OK), les envois
+  suivants passent ; seule la PREMIÈRE demande d'un nouveau binaire exige un
+  écran déverrouillé. Le timeout 15 s de notify.py borne le coût du cas
+  verrouillé-sans-autorisation.
+- **WhatsApp écarté** : l'API officielle (Cloud API) exige un compte Meta
+  Business, un numéro dédié et un webhook public — contraire au local-first ;
+  les ponts non officiels (Baileys, whatsapp-web.js) violent les ToS et font
+  bannir le compte. Ne pas re-explorer sans changement chez Meta.
+- **Entrant (approbation par réponse) différé, volontairement** : lire
+  `~/Library/Messages/chat.db` demande Full Disk Access et le schéma bouge
+  avec macOS ; surtout, approuver = promouvoir du code généré par IA en
+  plugin vif — cohérent avec « préférer ne pas agir », l'approbation reste
+  vocale/CLI tant que l'usage réel ne prouve pas le besoin. Si on le fait :
+  vérifier le handle expéditeur ET exiger le slug dans la réponse (jamais un
+  « oui » nu). Alternative robuste documentée : bot Telegram (long-polling,
+  pas de port ouvert, boutons inline, allowlist chat-id) — au prix d'un
+  serveur tiers.
+
+## 2026-08-16 — Atelier : fallback codex réparé (dérive de CLI)
+
+- **Casse constatée en production** (build « jouer de la musique dans le
+  salon ») : `codex exec --full-auto` n'existe plus — codex-cli 0.147.0 a
+  supprimé le flag sur `exec`. Le fallback échouait donc instantanément après
+  chaque échec d'agy. Correction dans `run_worker` :
+  `codex exec --sandbox workspace-write <prompt>` (exec est non interactif ;
+  workspace-write suffit pour écrire les candidats et lancer le smoke test).
+  Vérifié en vrai : `run_worker('codex', …)` → rc=0 en ~4 s, dépôt intact.
+- **agy hors de cause** : modèle `gemini-3.1-pro-high` toujours listé, flags
+  inchangés (1.1.13), réponse en 8 s sur prompt trivial. Le timeout de 900 s
+  du 16/08 était transitoire (session de build bloquée côté serveur,
+  probablement) — pas de correctif, le timeout + fallback est exactement le
+  mécanisme prévu pour ce cas.
+- **Leçon** : les CLI des workers dérivent silencieusement (mise à jour
+  homebrew/npm) et l'atelier ne s'en aperçoit qu'au prochain build. Si ça se
+  reproduit, envisager un smoke test des workers (prompt « OK ») en tête de
+  `process_one`, ou après chaque upgrade des CLI.
+
 ## Incidents (à ne pas reproduire)
 
 - **13/08 : profil vocal réel détruit par un test.** La migration du profil

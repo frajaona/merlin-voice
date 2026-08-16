@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import notify
+
 REPO = Path(__file__).resolve().parent
 REQUESTS_FILE = REPO / "data" / "feature-requests.jsonl"
 READY_FILE = REPO / "data" / "skill-ready.jsonl"
@@ -39,6 +41,12 @@ def log(msg: str):
     LOG_FILE.parent.mkdir(exist_ok=True)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
+
+
+def notify_user(msg: str):
+    status = notify.send_imessage(msg)
+    if status != "disabled":
+        log(f"notify: iMessage {status}")
 
 
 def load_requests() -> list:
@@ -95,7 +103,10 @@ def run_worker(worker: str, prompt: str) -> bool:
         cmd = ["agy", "-p", prompt, "--dangerously-skip-permissions",
                "--model", AGY_MODEL, "--print-timeout", f"{WORKER_TIMEOUT_SECS}s"]
     elif worker == "codex":
-        cmd = ["codex", "exec", "--full-auto", prompt]
+        # `--full-auto` n'existe plus sur `exec` (vérifié codex-cli 0.147.0) :
+        # exec est non interactif, le sandbox workspace-write suffit pour
+        # écrire les deux fichiers candidats et lancer le smoke test.
+        cmd = ["codex", "exec", "--sandbox", "workspace-write", prompt]
     else:
         log(f"unknown worker '{worker}', skipping")
         return False
@@ -180,6 +191,7 @@ def process_one() -> bool:
     pending["status"] = "building"
     pending["building_ts"] = datetime.datetime.now().isoformat(timespec="seconds")
     save_requests(requests)
+    notify_user(f"🔨 Atelier Merlin : construction de « {pending.get('capability')} » lancée ({slug}).")
 
     outcome = None
     for worker in WORKERS:
@@ -202,6 +214,8 @@ def process_one() -> bool:
         pending["failed_ts"] = datetime.datetime.now().isoformat(timespec="seconds")
         save_requests(requests)
         log(f"all workers failed for '{slug}'")
+        notify_user(f"❌ Atelier Merlin : échec de construction pour « {pending.get('capability')} » "
+                    f"({slug}) — détails dans data/workshop.log.")
         return False
 
     committed = commit_candidate(slug)
@@ -220,6 +234,9 @@ def process_one() -> bool:
         }, ensure_ascii=False) + "\n")
     log(f"candidate '{slug}' built by {outcome} (committed={committed}); "
         f"approve with: venv/bin/python tools/approve_skill.py {slug}")
+    notify_user(f"✅ Atelier Merlin : « {pending.get('capability')} » ({slug}) a passé les gates. "
+                f"Pour l'activer : dis « Merlin, active {slug.replace('_', ' ')} » "
+                f"ou venv/bin/python tools/approve_skill.py {slug}")
     return True
 
 

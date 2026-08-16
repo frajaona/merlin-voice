@@ -36,6 +36,21 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   liste de messages ne grandit plus sans limite. **requirements.txt
   épinglé** (pipecat 1.3.0 et al.). Détails dans `docs/DECISIONS.md`.
 
+- **2026-08-16** — **Notifications iMessage sortantes de l'atelier**
+  (`notify.py`, AppleScript → Messages.app) : lancement de construction,
+  échec, candidat prêt (avec la phrase d'activation). Désactivé tant que
+  `data/notify.json` (`{"imessage": "+336…"}`) ou `MERLIN_NOTIFY_IMESSAGE`
+  n'est pas renseigné ; best-effort (jamais bloquant). Test hors-ligne :
+  `tools/test_notify.py`. WhatsApp écarté, approbation entrante différée —
+  voir `docs/DECISIONS.md`.
+
+- **2026-08-16** — **Chaîne de workers de l'atelier réparée** : le fallback
+  codex était cassé (`codex exec --full-auto` supprimé du CLI) — remplacé
+  par `--sandbox workspace-write` (vérifié codex-cli 0.147.0, `run_worker`
+  testé en vrai : rc=0). agy re-testé OK (le timeout 900 s du 16/08 était
+  transitoire, modèle et flags toujours valides). La demande de test ayant
+  échoué a été retirée de la file. Détails dans `docs/DECISIONS.md`.
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
@@ -54,7 +69,18 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
 6. **Gating de Whisper hors attention** (privacy + compute) : ne transcrire que
    si l'attention est ouverte ou si le moteur d'éveil vient de tirer. À peser :
    on perdrait la collecte de données STT hors attention.
-7. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
+7. **Dashboard web (Pipecat Voice UI Kit)** : remplacer `static/index.html`
+   par un client React (kit shadcn) + panneaux alimentés par messages RTVI
+   sur le data channel existant — décisions VoiceGate en direct, transcript
+   attribué, file de l'atelier avec bouton d'approbation, cartes riches pour
+   les outils. **Prérequis : l'auth de `/api/offer`** (item Ops) — pas de
+   bouton « activer du code généré » sur une page LAN ouverte.
+8. **Approbation par réponse iMessage** (entrant) : seulement si l'usage des
+   notifications sortantes le justifie — polling de `chat.db` (Full Disk
+   Access, schéma fragile) avec vérification du handle expéditeur + slug
+   explicite dans la réponse ; alternative robuste : bot Telegram
+   (long-polling, boutons). Voir `docs/DECISIONS.md` 2026-08-16.
+9. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
    données synthétiques françaises) si le zipformer montre des faiblesses en
    conditions bruyantes.
 
