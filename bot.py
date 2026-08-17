@@ -29,7 +29,20 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import Frame, LLMContextFrame, TranscriptionFrame
+from pipecat.frames.frames import (
+    Frame,
+    FunctionCallCancelFrame,
+    FunctionCallInProgressFrame,
+    FunctionCallResultFrame,
+    LLMConfigureOutputFrame,
+    LLMContextFrame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+    LLMMessagesAppendFrame,
+    LLMTextFrame,
+    TranscriptionFrame,
+    TTSSpeakFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
@@ -233,7 +246,9 @@ class UserTranscriptLogger(FrameProcessor):
     """Passthrough processor that records every final user transcription.
 
     Logs raw STT output (even turns later discarded as echo or noise) — the
-    misrecognitions are exactly what the STT test set needs.
+    misrecognitions are exactly what the STT test set needs. Typed dashboard
+    messages (RTVI send-text -> LLMMessagesAppendFrame) are logged too, with
+    a "[clavier]" prefix so STT tuning can filter them out.
     """
 
     def __init__(self, session_id: str):
@@ -244,6 +259,41 @@ class UserTranscriptLogger(FrameProcessor):
         await super().process_frame(frame, direction)
         if isinstance(frame, TranscriptionFrame):
             await asyncio.to_thread(TRANSCRIPTS.append, self._session_id, "user", frame.text)
+        elif isinstance(frame, LLMMessagesAppendFrame):
+            for m in frame.messages:
+                if m.get("role") == "user" and isinstance(m.get("content"), str):
+                    await asyncio.to_thread(
+                        TRANSCRIPTS.append, self._session_id, "user", f"[clavier] {m['content']}"
+                    )
+        await self.push_frame(frame, direction)
+
+
+class AssistantResponseLogger(FrameProcessor):
+    """Logs each LLM reply to the transcript store, spoken or not.
+
+    Sits right after the LLM: catches text even when the dashboard asked for
+    a silent reply (send-text with audio_response=false marks the frames
+    skip_tts, so a TTS-side logger would miss them). Logs the full generated
+    text — a barge-in may cut playback, so the tail of a logged answer may
+    not have been heard. Tool-call rounds without text log nothing.
+    """
+
+    def __init__(self, session_id: str):
+        super().__init__()
+        self._session_id = session_id
+        self._parts: list | None = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._parts = []
+        elif isinstance(frame, LLMTextFrame) and self._parts is not None:
+            self._parts.append(frame.text)
+        elif isinstance(frame, LLMFullResponseEndFrame) and self._parts is not None:
+            text = "".join(self._parts).strip()
+            self._parts = None
+            if text:
+                await asyncio.to_thread(TRANSCRIPTS.append, self._session_id, "assistant", text)
         await self.push_frame(frame, direction)
 
 class HistoryTrimmer(FrameProcessor):
@@ -267,6 +317,42 @@ class HistoryTrimmer(FrameProcessor):
                 while tail and tail[0].get("role") != "user":
                     tail.pop(0)
                 frame.context.set_messages(head + tail)
+        await self.push_frame(frame, direction)
+
+
+class SilentTurnTTSFilter(FrameProcessor):
+    """Drops plugin filler speech ("Je regarde ça.") during silent chat turns.
+
+    Plugins push TTSSpeakFrames that bypass the LLM's skip_tts stamping, so a
+    silent dashboard turn still spoke its tool filler. This filter (between
+    the LLM and the TTS) infers the mode from the frames themselves: the LLM
+    stamps skip_tts on each LLMFullResponseStartFrame, and function-call
+    frames mark a tool in flight. A TTSSpeakFrame is dropped only while a
+    silent turn is active — asynchronous speech like the timer's alarm
+    ("C'est l'heure !") arrives idle and always passes.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._silent = False
+        self._response_active = False
+        self._pending_calls = 0
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._response_active = True
+            self._silent = bool(getattr(frame, "skip_tts", False))
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            self._response_active = False
+        elif isinstance(frame, FunctionCallInProgressFrame):
+            self._pending_calls += 1
+        elif isinstance(frame, (FunctionCallResultFrame, FunctionCallCancelFrame)):
+            self._pending_calls = max(0, self._pending_calls - 1)
+        elif isinstance(frame, TTSSpeakFrame):
+            if self._silent and (self._response_active or self._pending_calls > 0):
+                logger.info(f"SilentTurnTTSFilter: muting plugin speech [{frame.text}]")
+                return
         await self.push_frame(frame, direction)
 
 
@@ -375,10 +461,10 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         settings=KokoroTTSService.Settings(language=Language.FR),
     )
 
-    # Track what the bot says: for barge-in echo detection, for the question
-    # detection of the attention gate, and for the transcript log. Sentences
-    # are logged when synthesized — a barge-in can cut playback, so the tail
-    # of a logged answer may not have been heard.
+    # Track what the bot says out loud: for barge-in echo detection and for
+    # the question detection of the attention gate. (The transcript log of
+    # replies lives in AssistantResponseLogger, LLM-side, so silent dashboard
+    # replies are logged too.)
     recent_tts_words = RecentTTSWords()
     last_bot = LastBotUtterance()
     _orig_run_tts = tts.run_tts
@@ -386,7 +472,6 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     async def _run_tts_tracking(text: str, context_id: str):
         recent_tts_words.add(text)
         last_bot.text = text
-        await asyncio.to_thread(TRANSCRIPTS.append, session_id, "assistant", text)
         async for frame in _orig_run_tts(text, context_id):
             yield frame
 
@@ -440,6 +525,8 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         aggregators.user(),
         HistoryTrimmer(),
         llm,
+        AssistantResponseLogger(session_id),
+        SilentTurnTTSFilter(),
         tts,
         transport.output(),
         aggregators.assistant(),
@@ -455,6 +542,26 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
             function_call_report_level={"*": RTVIFunctionCallReportLevel.FULL},
         ),
     )
+
+    # Typed chat from the dashboard. Deliberately NOT RTVI's native send-text:
+    # its transient skip_tts toggle only covers the first LLM run, so a silent
+    # question answered via a tool call (= second run) was spoken out loud
+    # (observed 2026-08-17, docs/DECISIONS.md). Here the spoken/silent mode is
+    # sticky: set per typed turn, reset to spoken by the next accepted voice
+    # turn (VoiceGate pushes the counterpart LLMConfigureOutputFrame).
+    @worker.rtvi.event_handler("on_client_message")
+    async def on_client_message(rtvi, message):
+        if message.type != "chat":
+            return
+        data = message.data if isinstance(message.data, dict) else {}
+        text = str(data.get("text", "")).strip()
+        if not text:
+            return
+        await rtvi.interrupt_bot()
+        await rtvi.push_frame(LLMConfigureOutputFrame(skip_tts=not data.get("speak", True)))
+        await rtvi.push_frame(
+            LLMMessagesAppendFrame(messages=[{"role": "user", "content": text}], run_llm=True)
+        )
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, connection):

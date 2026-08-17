@@ -12,6 +12,8 @@ docs/DECISIONS.md 2026-08-16) are the contract for any future richer
 dashboard living alongside static/index.html.
 """
 import asyncio
+import datetime
+import json
 import os
 import re
 import secrets
@@ -101,3 +103,39 @@ async def approve(body: dict):
     # Plugins are rescanned at the start of each conversation; an ongoing
     # session picks it up on the next connection.
     return {"ok": True, "plugin": target.name}
+
+
+@router.post("/dismiss")
+async def dismiss(body: dict):
+    """Dismiss a request by its `ts` id: a pending build is cancelled, a
+    failed one is cleared, a built candidate is rejected (its skill-ready
+    entry is removed too, so it can't be activated by voice/CLI either).
+    A build in progress can't be dismissed."""
+    ts = str(body.get("ts", ""))
+
+    def do_dismiss():
+        requests = workshop.load_requests()
+        entry = next((r for r in requests if r.get("ts") == ts), None)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="demande introuvable")
+        if entry.get("status") == "building":
+            raise HTTPException(status_code=409, detail="construction en cours — indéfaussable")
+        if entry.get("status") == "dismissed":
+            return entry  # idempotent
+        entry["status"] = "dismissed"
+        entry["dismissed_ts"] = datetime.datetime.now().isoformat(timespec="seconds")
+        workshop.save_requests(requests)
+        slug = entry.get("slug")
+        if slug and skill_admin.READY_FILE.exists():
+            kept = [
+                line for line in skill_admin.READY_FILE.read_text(encoding="utf-8").splitlines()
+                if line.strip() and json.loads(line).get("slug") != slug
+            ]
+            skill_admin.READY_FILE.write_text(
+                "".join(l + "\n" for l in kept), encoding="utf-8"
+            )
+        return entry
+
+    entry = await asyncio.to_thread(do_dismiss)
+    logger.info(f"workshop request dismissed from the dashboard: [{entry.get('capability')}]")
+    return {"ok": True}

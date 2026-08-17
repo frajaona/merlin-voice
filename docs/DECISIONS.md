@@ -350,6 +350,63 @@ skills), et à terme approuver à distance.
 - **Setup d'un appareil** : ouvrir `https://<host>:7860/#token=<token>` une
   fois (stocké en localStorage, retiré de l'URL). Token : `cat data/auth-token`.
 
+## 2026-08-17 — Chat texte : send-text RTVI, gate contourné à dessein, log LLM-side
+
+- **Mécanisme** : le RTVIProcessor de pipecat 1.3.0 gère nativement
+  `send-text` → `LLMMessagesAppendFrame` (+ `LLMConfigureOutputFrame` si
+  `audio_response=false`) — aucun code serveur pour l'envoi. Même session,
+  même contexte, mêmes outils que la voix ; nécessite une connexion WebRTC
+  active (pas de canal REST séparé : ça forkerait l'état de conversation).
+- **Le clavier contourne le VoiceGate, et c'est voulu** : le gate protège le
+  micro (canal ouvert à quiconque est dans la pièce) ; la saisie exige le
+  token Bearer, l'expéditeur est donc déjà authentifié. Pas de mot d'éveil,
+  pas de vérif locuteur sur le texte tapé.
+- **Réponse silencieuse** : `audio_response=false` marque les TextFrames du
+  LLM `skip_tts` — le TTS les saute mais elles continuent de descendre le
+  pipeline (vérifié dans llm_service/tts_service). Conséquences exploitées :
+  (1) le client rend les réponses depuis `bot-llm-text` (streaming token par
+  token, remplace `bot-tts-text` — un seul chemin de rendu voix/texte) ;
+  (2) le log des réponses a été déplacé du wrapper `run_tts` vers
+  `AssistantResponseLogger` (processor après le llm) — sinon les réponses
+  silencieuses n'étaient jamais journalisées. `run_tts` ne garde que
+  recent_tts_words/last_bot (écho + détection de question, purement oraux).
+- **Journal** : tours tapés préfixés `[clavier]` dans transcripts.db (à
+  filtrer du jeu de tuning STT, comme `[filtré: …]`). Le texte assistant
+  loggé est désormais la réponse LLM complète (une ligne par run LLM), plus
+  du par-phrase synthétisé ; un barge-in peut toujours couper la lecture
+  après le log.
+- **Vérifié** : `tools/probe_rtvi.py "Réponds juste avec le mot bonjour."` →
+  réponse `bonjour` en bot-llm-text, aucun bot-tts-started, et les deux
+  lignes attendues dans transcripts.db (`[clavier] …` + `assistant`).
+
+### Correctif du 17/08 : send-text abandonné (bug upstream sur les tours à outils)
+
+- **Bug constaté par Fred en prod** : 1er message tapé silencieux OK, le 2e
+  parlait — le 2e était une question météo, donc un tour à outil = **deux
+  runs LLM**. Le `send-text` natif pousse configure(skip)→append→configure
+  (restore) : le restore tombe entre le run 1 (tool call) et le run 2 (la
+  vraie réponse), qui repart donc en TTS. Défaut de conception upstream —
+  ajouté à la liste des issues Pipecat à déposer (ROADMAP Ops).
+- **Correctif** : le client envoie un `client-message` custom
+  `{t:"chat", d:{text, speak}}` ; bot.py (handler `on_client_message`) pousse
+  interrupt + `LLMConfigureOutputFrame(skip_tts)` **sans restore** (mode
+  collant) + append. Le retour au parlé est fait par le prochain tour vocal
+  accepté : VoiceGate pousse `LLMConfigureOutputFrame(skip_tts=False)`
+  (une question orale a toujours une réponse orale).
+- **Deuxième fuite trouvée dans la foulée** : les plugins poussent des
+  `TTSSpeakFrame` (« Je regarde ça. ») qui contournent le marquage skip_tts
+  du LLM — le filler parlait pendant un tour silencieux.
+  `SilentTurnTTSFilter` (entre llm et tts) les coupe **seulement pendant un
+  tour silencieux actif** (skip_tts lu sur le LLMFullResponseStartFrame
+  marqué + compteur d'appels d'outils en vol) : l'alarme différée du
+  minuteur (« C'est l'heure ! »), qui arrive à vide, passe toujours. Limite
+  connue : une alarme tombant exactement pendant un tour silencieux actif
+  serait coupée (rarissime, accepté).
+- **Re-vérifié sur le scénario exact du bug** (météo tapée en silencieux) :
+  zéro événement TTS, filler coupé (log `SilentTurnTTSFilter`), réponse
+  complète en bot-llm-text ; et en mode parlé la même question déclenche
+  bien le TTS.
+
 ## Incidents (à ne pas reproduire)
 
 - **13/08 : profil vocal réel détruit par un test.** La migration du profil

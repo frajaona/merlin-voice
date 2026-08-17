@@ -5,7 +5,11 @@ keep-alive, RTVI client-ready) and prints every RTVI message type received.
 Optionally plays a WAV file as the microphone to exercise STT -> VoiceGate ->
 gate-decision server-messages.
 
-Usage (bot must be running): venv/bin/python tools/probe_rtvi.py [speech.wav]
+Usage (bot must be running): venv/bin/python tools/probe_rtvi.py [speech.wav | "message texte"]
+- no argument: handshake only (expects bot-ready)
+- a .wav path: plays it as the mic, expects a gate-decision server-message
+- any other string: sends it as a typed chat message (RTVI send-text,
+  audio_response=false) and expects a silent bot-llm-text reply
 A test utterance: say -v Thomas "Merlin, quelle heure est-il ?" -o /tmp/u.wav --data-format=LEI16@16000
 """
 import asyncio
@@ -70,7 +74,9 @@ class WavThenSilenceTrack(MediaStreamTrack):
 
 
 async def main():
-    wav = sys.argv[1] if len(sys.argv) > 1 else None
+    arg = sys.argv[1] if len(sys.argv) > 1 else None
+    wav = arg if arg and arg.endswith(".wav") else None
+    chat = arg if arg and not wav else None
     received = []
     pc = RTCPeerConnection()
     pc.addTrack(WavThenSilenceTrack(wav))
@@ -92,6 +98,8 @@ async def main():
         except Exception:
             return
         received.append(msg)
+        if msg.get("type") in ("bot-llm-text", "metrics"):
+            return  # too chatty to print (one message per token)
         extra = ""
         if msg.get("type") == "server-message":
             extra = " " + json.dumps(msg.get("data"), ensure_ascii=False)
@@ -122,7 +130,18 @@ async def main():
                 dc.send("ping")
 
     ka = asyncio.ensure_future(keepalive())
-    await asyncio.sleep(25 if wav else 8)
+
+    if chat:
+        for _ in range(100):  # wait for bot-ready before typing
+            if any(m.get("type") == "bot-ready" for m in received):
+                break
+            await asyncio.sleep(0.1)
+        dc.send(json.dumps({
+            "label": "rtvi-ai", "type": "client-message", "id": "chat-1",
+            "data": {"t": "chat", "d": {"text": chat, "speak": False}},
+        }))
+
+    await asyncio.sleep(35 if chat else 25 if wav else 8)  # tool turns need 2 LLM runs
     ka.cancel()
     await pc.close()
 
@@ -134,6 +153,12 @@ async def main():
                  and (m.get("data") or {}).get("event") == "gate-decision"]
         print("GATE DECISIONS:", json.dumps([m["data"] for m in gates], ensure_ascii=False, indent=1))
         assert gates, "no gate-decision received"
+    if chat:
+        reply = "".join((m.get("data") or {}).get("text") or ""
+                        for m in received if m.get("type") == "bot-llm-text")
+        print("CHAT REPLY:", json.dumps(reply, ensure_ascii=False))
+        assert reply.strip(), "no bot-llm-text reply received"
+        assert "bot-tts-started" not in types, "TTS ran despite audio_response=false"
     print("PROBE OK")
 
 

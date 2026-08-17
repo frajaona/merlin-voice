@@ -99,8 +99,39 @@ def test_approve():
     print("ok: approve endpoint")
 
 
+def test_dismiss():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        client = make_client(tmp, lambda slug: Path(f"plugins/{slug}.py"))
+        workshop.save_requests([
+            {"ts": "T1", "capability": "a", "status": "pending"},
+            {"ts": "T2", "capability": "b", "status": "building"},
+            {"ts": "T3", "capability": "c", "status": "built", "slug": "c_skill"},
+        ])
+        skill_admin.READY_FILE.write_text(
+            json.dumps({"slug": "c_skill"}) + "\n" + json.dumps({"slug": "other"}) + "\n",
+            encoding="utf-8",
+        )
+        # Unknown ts, in-progress build -> refused
+        assert client.post("/api/workshop/dismiss", headers=auth(), json={"ts": "nope"}).status_code == 404
+        assert client.post("/api/workshop/dismiss", headers=auth(), json={"ts": "T2"}).status_code == 409
+        # Pending -> dismissed (and idempotent)
+        assert client.post("/api/workshop/dismiss", headers=auth(), json={"ts": "T1"}).status_code == 200
+        assert client.post("/api/workshop/dismiss", headers=auth(), json={"ts": "T1"}).status_code == 200
+        # Built -> dismissed + its skill-ready entry revoked (other entries kept)
+        assert client.post("/api/workshop/dismiss", headers=auth(), json={"ts": "T3"}).status_code == 200
+        statuses = {r["ts"]: r["status"] for r in workshop.load_requests()}
+        assert statuses == {"T1": "dismissed", "T2": "building", "T3": "dismissed"}
+        ready = [json.loads(l)["slug"] for l in skill_admin.READY_FILE.read_text().splitlines()]
+        assert ready == ["other"]
+        # No token -> untouched
+        assert client.post("/api/workshop/dismiss", json={"ts": "T2"}).status_code == 401
+    print("ok: dismiss endpoint")
+
+
 if __name__ == "__main__":
     test_auth()
     test_workshop_state()
     test_approve()
+    test_dismiss()
     print("all dashboard_api tests passed")

@@ -65,6 +65,25 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   `tools/test_dashboard_api.py` (offline) ; sonde protocole bout-en-bout :
   `tools/probe_rtvi.py` (STT→gate→server-message vérifié sur audio réel).
 
+- **2026-08-17** — **Chat texte dans le dashboard** : barre de saisie, même
+  contexte/outils que la voix, toggle 🔊/🔇, bulles bot en streaming token
+  par token (`bot-llm-text`). Le clavier contourne le VoiceGate à dessein
+  (authentifié par le token, contrairement au micro). Envoi via
+  `client-message` custom + mode skip_tts **collant** (le `send-text` natif
+  de pipecat a un bug sur les tours à outils — la réponse « silencieuse »
+  parlait ; trouvé par Fred en prod) ; retour au parlé au prochain tour
+  vocal accepté ; `SilentTurnTTSFilter` coupe les fillers des plugins
+  (« Je regarde ça. ») pendant les tours silencieux sans toucher aux alarmes
+  différées. Journalisation : tours tapés en `[clavier]` + réponses via
+  `AssistantResponseLogger` côté LLM (attrape aussi les réponses
+  silencieuses). Vérifié bout-en-bout sur le scénario du bug
+  (`tools/probe_rtvi.py "question météo"`, modes silencieux et parlé).
+  Détails `docs/DECISIONS.md`. **Écarter une demande** depuis le panneau
+  atelier (POST `/api/workshop/dismiss`, id = `ts`) : pending annulé, failed
+  nettoyé, built rejeté (entrée skill-ready révoquée — plus activable ni par
+  la voix ni par le CLI) ; building non défaussable ; `status: "dismissed"`
+  conservé dans le jsonl (récupérable à la main), masqué du panneau.
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
@@ -122,7 +141,9 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   :8101, Wyoming Whisper/Piper, docker) — à réécrire pour la stack actuelle
   (ollama serve + bot.py, survie au reboot) ou à supprimer.
 - **Issues Pipecat upstream** à déposer (keep-alive coupe l'audio ; pacing en
-  rafale) — reproduisibles avec `tools/probe_barge_in.py`.
+  rafale — reproduisibles avec `tools/probe_barge_in.py` ; RTVI `send-text` :
+  le restore de skip_tts tombe entre les deux runs LLM d'un tour à outil,
+  la réponse « silencieuse » est parlée — voir `docs/DECISIONS.md` 17/08).
 
 ### Fonctionnalités
 

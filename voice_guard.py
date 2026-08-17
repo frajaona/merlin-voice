@@ -52,6 +52,7 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     ErrorFrame,
     Frame,
+    LLMConfigureOutputFrame,
     TranscriptionFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -659,5 +660,8 @@ class VoiceGate(FrameProcessor):
                     self._log_fn(f"[filtré: {reason}] {frame.text}")
                 return
             logger.info(f"VoiceGate: accepted [{frame.text}] ({reason})")
+            # A silent typed exchange (dashboard chat, sticky skip_tts) must
+            # never mute a voice turn: spoken questions get spoken answers.
+            await self.push_frame(LLMConfigureOutputFrame(skip_tts=False))
 
         await self.push_frame(frame, direction)

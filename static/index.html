@@ -127,6 +127,23 @@
       align-self: stretch; font-size: 0.78rem; color: var(--faint);
       padding: 2px 6px; font-style: italic;
     }
+    #chat-bar { display: flex; gap: 8px; margin-top: 10px; }
+    #chat-input {
+      flex: 1; min-width: 0;
+      background: #101010; border: 1px solid var(--border); color: var(--text);
+      border-radius: 10px; padding: 9px 12px; font-size: 0.9rem;
+    }
+    #chat-input:disabled { opacity: 0.5; }
+    #chat-send {
+      background: #1e2c3d; color: var(--blue); border: 1px solid #2a3f57;
+      border-radius: 10px; padding: 9px 14px; font-size: 0.85rem; cursor: pointer;
+    }
+    #chat-send:disabled { opacity: 0.4; cursor: default; }
+    #chat-speak {
+      background: none; border: 1px solid var(--border); border-radius: 10px;
+      padding: 0 10px; font-size: 1rem; cursor: pointer;
+    }
+    #chat-speak.muted { opacity: 0.5; }
     .filtered .why { color: #5f4a3a; }
     #convo:empty::after, #gate-feed:empty::after, #tools:empty::after {
       content: attr(data-empty); color: var(--faint); font-size: 0.82rem; font-style: italic;
@@ -198,6 +215,13 @@
     }
     .btn-approve.armed { background: #2c2416; color: var(--amber); border-color: #4a3c1f; }
     .btn-approve:disabled { opacity: 0.5; cursor: default; }
+    .btn-dismiss {
+      background: none; border: 1px solid var(--border); color: var(--faint);
+      border-radius: 7px; padding: 2px 8px; font-size: 0.72rem; cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-dismiss.armed { background: #2b1512; color: var(--red); border-color: #4a2a1f; }
+    .btn-dismiss:disabled { opacity: 0.5; cursor: default; }
     #ws-log summary { font-size: 0.72rem; color: var(--faint); cursor: pointer; margin-top: 10px; }
     #ws-log pre {
       font-size: 0.66rem; color: var(--muted); font-family: ui-monospace, monospace;
@@ -250,6 +274,12 @@
     <section id="panel-convo">
       <h2>Conversation</h2>
       <div id="convo" data-empty="Aucun échange pour l'instant."></div>
+      <form id="chat-bar">
+        <button type="button" id="chat-speak" title="Réponse à voix haute ou silencieuse">🔊</button>
+        <input id="chat-input" type="text" placeholder="Connecte-toi pour écrire…"
+               autocomplete="off" enterkeyhint="send" disabled>
+        <button type="submit" id="chat-send" disabled>Envoyer</button>
+      </form>
     </section>
 
     <section id="panel-gate">
@@ -407,6 +437,7 @@
         btnDisconnect.style.display = 'block';
         setStatus('Connecté — parle maintenant', true);
         setOrb('listening');
+        setChatEnabled(true);
       } catch (err) {
         console.error(err);
         setStatus('Erreur: ' + err.message);
@@ -427,6 +458,7 @@
       orb.className = '';
       orb.textContent = '🎙';
       botBubble = null;
+      setChatEnabled(false);
     }
 
     orb.addEventListener('click', () => {
@@ -458,8 +490,11 @@
         case 'server-message':
           if (d.event === 'gate-decision') onGateDecision(d);
           break;
-        case 'bot-tts-text':
-          appendBotText(d.text || '');
+        case 'bot-llm-started':
+          botBubble = null; // each LLM run opens a fresh bubble (lazily, on first token)
+          break;
+        case 'bot-llm-text':
+          appendBotToken(d.text || '');
           break;
         case 'llm-function-call-in-progress': onToolStart(d); break;
         case 'llm-function-call-stopped': onToolStop(d); break;
@@ -494,15 +529,7 @@
       // Conversation
       const cstick = scrolledToBottom(convo);
       if (d.accepted) {
-        const b = document.createElement('div');
-        b.className = 'bubble user';
-        const who = document.createElement('span');
-        who.className = 'who';
-        who.textContent = d.speaker || 'inconnu';
-        b.appendChild(who);
-        b.append(d.text);
-        convo.appendChild(b);
-        botBubble = null; // next bot text starts a fresh bubble
+        addUserBubble(d.speaker || 'inconnu', d.text);
       } else {
         const f = document.createElement('div');
         f.className = 'filtered';
@@ -516,10 +543,25 @@
       autoscroll(convo, cstick);
     }
 
-    function appendBotText(text) {
-      if (!text.trim()) return;
+    function addUserBubble(who, text) {
+      const stick = scrolledToBottom(convo);
+      const b = document.createElement('div');
+      b.className = 'bubble user';
+      const chip = document.createElement('span');
+      chip.className = 'who';
+      chip.textContent = who;
+      b.appendChild(chip);
+      b.append(text);
+      convo.appendChild(b);
+      botBubble = null; // next bot text starts a fresh bubble
+      autoscroll(convo, stick);
+    }
+
+    function appendBotToken(text) {
+      if (!text) return;
       const stick = scrolledToBottom(convo);
       if (!botBubble) {
+        if (!text.trim()) return; // don't open a bubble on pure whitespace
         botBubble = document.createElement('div');
         botBubble.className = 'bubble bot';
         const who = document.createElement('span');
@@ -530,9 +572,44 @@
         convo.appendChild(botBubble);
       }
       const node = botBubble.lastChild;
-      node.textContent += (node.textContent ? ' ' : '') + text.trim();
+      // LLM tokens carry their own spacing; just strip the leading space of a bubble
+      node.textContent += node.textContent ? text : text.replace(/^\s+/, '');
       autoscroll(convo, stick);
     }
+
+    // ---- typed chat ----------------------------------------------------------
+    const chatInput = $('chat-input'), chatSend = $('chat-send'), chatSpeak = $('chat-speak');
+    let speakReplies = localStorage.getItem('merlin_speak') !== '0';
+
+    function renderSpeakToggle() {
+      chatSpeak.textContent = speakReplies ? '🔊' : '🔇';
+      chatSpeak.classList.toggle('muted', !speakReplies);
+    }
+    renderSpeakToggle();
+    chatSpeak.addEventListener('click', () => {
+      speakReplies = !speakReplies;
+      localStorage.setItem('merlin_speak', speakReplies ? '1' : '0');
+      renderSpeakToggle();
+    });
+
+    function setChatEnabled(on) {
+      chatInput.disabled = chatSend.disabled = !on;
+      chatInput.placeholder = on ? 'Écrire à Merlin…' : 'Connecte-toi pour écrire…';
+    }
+
+    $('chat-bar').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = chatInput.value.trim();
+      if (!text || !dc || dc.readyState !== 'open') return;
+      // Custom message (not RTVI send-text: its transient skip_tts toggle
+      // breaks on tool-call turns — see docs/DECISIONS.md 2026-08-17).
+      dc.send(JSON.stringify({
+        label: 'rtvi-ai', type: 'client-message', id: 'chat-' + Date.now(),
+        data: { t: 'chat', d: { text: text, speak: speakReplies } },
+      }));
+      addUserBubble('clavier', text);
+      chatInput.value = '';
+    });
 
     // ---- tool cards ----------------------------------------------------------
     const toolCards = new Map(); // tool_call_id -> card element
@@ -581,6 +658,7 @@
       failed:   ['failed',   'échec'],
     };
     let armedSlug = null, armTimer = null;
+    let armedDismiss = null, armDismissTimer = null;
 
     async function refreshWorkshop() {
       if (!token) return;
@@ -603,7 +681,8 @@
         return c;
       }));
 
-      const requests = (data.requests || []).slice().reverse(); // newest first
+      const requests = (data.requests || []).filter(r => r.status !== 'dismissed')
+        .slice().reverse(); // newest first
       const list = $('ws-requests');
       list.replaceChildren(...requests.map(r => {
         const item = document.createElement('div');
@@ -619,6 +698,15 @@
         badge.className = 'badge ' + cls;
         badge.textContent = label;
         head.append(cap, badge);
+        if (!isActive && ['pending', 'failed', 'built'].includes(r.status)) {
+          const x = document.createElement('button');
+          x.type = 'button';
+          x.className = 'btn-dismiss';
+          if (armedDismiss === r.ts) { x.classList.add('armed'); x.textContent = 'écarter ?'; }
+          else x.textContent = '✕';
+          x.addEventListener('click', () => onDismiss(r.ts, x));
+          head.appendChild(x);
+        }
         item.appendChild(head);
         const meta = document.createElement('div');
         meta.className = 'meta';
@@ -637,6 +725,33 @@
       }));
 
       $('ws-log').querySelector('pre').textContent = (data.log || []).join('\n');
+    }
+
+    async function onDismiss(ts, btn) {
+      $('ws-error').textContent = '';
+      if (armedDismiss !== ts) {
+        armedDismiss = ts;
+        btn.classList.add('armed');
+        btn.textContent = 'écarter ?';
+        clearTimeout(armDismissTimer);
+        armDismissTimer = setTimeout(() => { armedDismiss = null; refreshWorkshop(); }, 5000);
+        return;
+      }
+      clearTimeout(armDismissTimer);
+      armedDismiss = null;
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/api/workshop/dismiss', {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ ts }),
+        });
+        const out = await resp.json().catch(() => ({}));
+        if (!resp.ok) $('ws-error').textContent = out.detail || ('Erreur ' + resp.status);
+      } catch (e) {
+        $('ws-error').textContent = 'Erreur réseau: ' + e.message;
+      }
+      refreshWorkshop();
     }
 
     async function onApprove(slug, btn) {
