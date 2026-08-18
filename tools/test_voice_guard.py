@@ -89,6 +89,7 @@ def test_owner_enrollment_flow():
 
         ok, why = core.evaluate("Salut Merlin comment ça va", near(fred, 10), 2.0)
         assert ok and "inscription proprietaire" in why, why
+        assert core.last_speaker == "proprietaire"
         n = 1
         while household.pending_name():
             clock.t += 5
@@ -117,11 +118,13 @@ def test_activator_binding():
         ok, why = core.evaluate("Merlin quelle heure est-il", near(fred, 2), 2.0)
         assert ok and "éveil par fred" in why, why
         assert core.activator == "fred"
+        assert core.last_speaker == "fred"
 
         # Wife is enrolled but not the activator -> dropped mid-exchange.
         clock.t += 3
         ok, why = core.evaluate("et il fait quel temps aujourd'hui", near(wife, 3), 2.0)
         assert not ok and "pas l'activateur" in why, why
+        assert core.last_speaker is None  # rejected turns are never attributed
 
         # Fred continues fine.
         clock.t += 2
@@ -143,6 +146,7 @@ def test_activator_binding():
         clock.t += 2
         ok, why = core.evaluate("Oui.", near(stranger, 7), 0.6)
         assert ok and "court" in why, why
+        assert core.last_speaker == "camille"  # credited to the activator
 
         # One-word reply with buffer-inflated duration: still unverifiable
         # (a real "Non." at 1.9s embedded at sim 0.08 vs its own speaker).
@@ -174,6 +178,7 @@ def test_family_mode_and_short_wake():
         clock.t += 3
         ok, why = core.evaluate("avec du beurre salé s'il te plaît", near(wife, 2), 2.0)
         assert ok and "camille" in why, why
+        assert core.last_speaker == "camille"  # who spoke, not the activator
 
         # Short wake utterance: lenient identity bar, binds without anchor.
         core2 = make_core(household, clock)
@@ -186,6 +191,7 @@ def test_family_mode_and_short_wake():
         clock.t += 200
         ok, why = core2.evaluate("Merlin tu es là", None, 2.0)
         assert ok and "indisponible" in why, why
+        assert core2.last_speaker is None  # fail-open passes, but no attribution
         print("ok: family mode, short wake, fail-open")
 
 

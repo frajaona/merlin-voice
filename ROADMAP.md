@@ -84,6 +84,26 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   la voix ni par le CLI) ; building non défaussable ; `status: "dismissed"`
   conservé dans le jsonl (récupérable à la main), masqué du panneau.
 
+- **2026-08-18** — **Attribution du locuteur dans les transcriptions**
+  (item 4) : colonne `speaker` dans `turns` (migration in-place au démarrage),
+  `GateCore.last_speaker` posé sur chaque chemin d'acceptation (NULL plutôt
+  qu'un nom deviné : gate désactivé et fail-open ne s'attribuent pas ; les
+  tours courts sont crédités à l'activateur ; en mode famille c'est la
+  personne qui a parlé, pas l'activateur — corrige aussi le champ `speaker`
+  du dashboard). Tests : `tools/test_transcript_store.py` (nouveau) +
+  assertions dans `test_voice_guard.py` ; vérifié bout-en-bout via
+  `probe_rtvi.py` (rejet → ligne `[filtré: …]` speaker NULL).
+
+- **2026-08-18** — **LaunchAgents remis au propre + survie au reboot** :
+  `com.merlin.warmup` supprimé (curl d'un :8101 mort), `com.merlin.monitor`
+  réécrit (Ollama :11434, modèle épinglé via `/api/ps`, bot :7860 ; iMessage
+  via `notify.py` sur transition ok↔fail seulement), **`com.merlin.bot`
+  nouveau** (KeepAlive : démarre au login, relance sur crash — le bot survit
+  au reboot). Source de vérité : `ops/` (`ops/README.md` pour l'installation
+  et les commandes) ; `~/scripts/check-ai-stack.sh` = wrapper. Redémarrage :
+  `launchctl kickstart -k gui/$(id -u)/com.merlin.bot`. `com.wyoming.*`
+  laissés (possiblement utilisés par Home Assistant — à confirmer).
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
@@ -95,25 +115,23 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
    mal reconnus, et comparer des variantes Whisper (fine-tunes français).
 3. **`voice_profile.py prune`** : retirer les embeddings aberrants d'un profil
    (celui à consistance min ~0.47 chez Fred est un candidat).
-4. **Attribution du locuteur dans les transcriptions** : stocker « qui a parlé »
-   (l'info existe déjà dans le gate) — utile pour le résumé nocturne.
-5. **Inscription par commande vocale** : « Merlin, apprends la voix de Camille »
+4. **Inscription par commande vocale** : « Merlin, apprends la voix de Camille »
    → appelle un plugin qui ouvre l'inscription (aujourd'hui : CLI seulement).
-6. **Gating de Whisper hors attention** (privacy + compute) : ne transcrire que
+5. **Gating de Whisper hors attention** (privacy + compute) : ne transcrire que
    si l'attention est ouverte ou si le moteur d'éveil vient de tirer. À peser :
    on perdrait la collecte de données STT hors attention.
-7. **Dashboard riche v2 (mi-terme)** : le dashboard vanilla du 17/08 reste le
+6. **Dashboard riche v2 (mi-terme)** : le dashboard vanilla du 17/08 reste le
    client du quotidien ; une app plus ambitieuse (React ou autre, avec build)
    vivra **à côté** (ex. montée sur `/app`), en réutilisant le même contrat :
    token Bearer, REST `/api/workshop*`, messages RTVI du data channel (dont
    `server-message`/`gate-decision`). Idées : historique `transcripts.db`,
    stats du gate par locuteur, replay des tours filtrés, gestion des profils.
-8. **Approbation par réponse iMessage** (entrant) : seulement si l'usage des
+7. **Approbation par réponse iMessage** (entrant) : seulement si l'usage des
    notifications sortantes le justifie — polling de `chat.db` (Full Disk
    Access, schéma fragile) avec vérification du handle expéditeur + slug
    explicite dans la réponse ; alternative robuste : bot Telegram
    (long-polling, boutons). Voir `docs/DECISIONS.md` 2026-08-16.
-9. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
+8. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
    données synthétiques françaises) si le zipformer montre des faiblesses en
    conditions bruyantes.
 
@@ -136,10 +154,11 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   reste possible par-dessus pour l'accès hors LAN.
 - **Vrai certificat** (Tailscale serve / mkcert) pour tuer l'avertissement
   du téléphone.
-- **LaunchAgents périmés** : `com.merlin.monitor` + `com.merlin.warmup` et
-  `~/scripts/check-ai-stack.sh` surveillent l'ANCIENNE stack (Honcho, Router
-  :8101, Wyoming Whisper/Piper, docker) — à réécrire pour la stack actuelle
-  (ollama serve + bot.py, survie au reboot) ou à supprimer.
+- ~~LaunchAgents périmés~~ **fait 18/08** : warmup supprimé, monitor réécrit,
+  `com.merlin.bot` (KeepAlive) pour la survie au reboot — voir `ops/README.md`.
+  Reste ouvert : sort de `com.wyoming.whisper`/`com.wyoming.piper` (tournent
+  encore, :10300/:10200) — vérifier si le HA Yellow les utilise (protocole
+  Wyoming) avant de les supprimer.
 - **Issues Pipecat upstream** à déposer (keep-alive coupe l'audio ; pacing en
   rafale — reproduisibles avec `tools/probe_barge_in.py` ; RTVI `send-text` :
   le restore de skip_tts tombe entre les deux runs LLM d'un tour à outil,

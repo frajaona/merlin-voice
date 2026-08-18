@@ -26,13 +26,18 @@ engine). Tool plugins auto-load from `plugins/*.py`.
 
 ## Ops
 
-- Run: `venv/bin/python bot.py` (HTTPS :7860, cert.pem/key.pem).
+- Run: launchd owns the bot since 2026-08-18 — `com.merlin.bot` (KeepAlive,
+  démarre au login, relance sur crash ; voir `ops/README.md`). Manual dev run
+  (`venv/bin/python bot.py`, HTTPS :7860, cert.pem/key.pem) requires
+  `launchctl bootout gui/$(id -u)/com.merlin.bot` first, else the port is held.
+- Monitor: `com.merlin.monitor` runs `ops/check-ai-stack.sh` every 5 min
+  (Ollama, modèle épinglé, bot) and iMessages on ok↔fail transitions.
 - Dashboard: `https://<host>:7860/` (vanilla JS, RTVI sur le data channel).
   Auth : Bearer token (`data/auth-token` ou `MERLIN_TOKEN`) exigé sur
   `/api/offer` et `/api/workshop*` (`dashboard_api.py`). Sonde protocole :
   `tools/probe_rtvi.py` (bot lancé requis).
-- Restart: kill by port PID — `kill $(lsof -tnP -iTCP:7860 -sTCP:LISTEN)`,
-  wait for the port to free, force-kill if needed, then start. Do NOT
+- Restart: `launchctl kickstart -k gui/$(id -u)/com.merlin.bot` (a plain
+  `kill` of the port PID also works — launchd relaunches it). Do NOT
   `pkill -f "python bot.py"` (macOS process name is capital-P `Python`; a
   half-dead process once kept serving stale code).
 - Logs: `data/merlin.log` (rotating). Gate decisions: grep `VoiceGate`.
@@ -40,7 +45,9 @@ engine). Tool plugins auto-load from `plugins/*.py`.
   (very verbose — never leave it on).
 - Transcripts: `data/transcripts.db` (sqlite, table `turns`); rejected turns
   are stored with a `[filtré: reason]` prefix — downstream consumers must
-  filter them; they double as the STT/gate tuning dataset.
+  filter them; they double as the STT/gate tuning dataset. `speaker` column
+  (2026-08-18): enrolled name the gate attributed the turn to, NULL when
+  unknown (assistant rows, filtered turns, `[clavier]`, fail-open paths).
 - Voice profiles: `tools/voice_profile.py [status|enroll|cancel|reset]`
   (enroll on a complete profile opens a diversity top-up).
 - Tests (offline, no bot needed): `venv/bin/python tools/test_voice_guard.py`

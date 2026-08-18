@@ -418,3 +418,41 @@ skills), et à terme approuver à distance.
 - **13/08 : redémarrage fantôme.** `pkill -f "python bot.py"` ne matche pas le
   binaire macOS `Python` (majuscule) ; l'ancien process a continué à servir le
   vieux code pendant qu'on déboguait le neuf. Toujours tuer par PID du port.
+
+## 2026-08-18 — Attribution du locuteur + launchd
+
+- **Attribution : NULL plutôt qu'un nom deviné.** Colonne `speaker` dans
+  `turns` (migration `ALTER TABLE` au démarrage, testée sur l'ancien schéma).
+  `GateCore.last_speaker` est posé uniquement sur les chemins où l'identité
+  est établie : les fail-open (« vérification indisponible », gate désactivé)
+  passent le tour mais restent NULL — même philosophie que le gate (ne pas
+  agir > agir à tort). Les tours courts non vérifiés sont crédités à
+  l'activateur (cohérent avec la décision d'acceptation, qui les traite déjà
+  comme lui). Les tours rejetés et `[clavier]` restent NULL.
+- **Bug latent corrigé au passage** : le champ `speaker` du message RTVI
+  `gate-decision` utilisait `core.activator` — faux en mode famille (un
+  membre non-activateur accepté était affiché comme l'activateur). Il
+  utilise désormais `last_speaker` (la personne qui a réellement parlé).
+- **launchd : le bot passe sous `com.merlin.bot` (KeepAlive).** Motivation :
+  survie au reboot (reliquat revue 13/08) + relance auto sur crash. Le
+  redémarrage documenté devient `launchctl kickstart -k` ; un `kill` simple
+  relance aussi (KeepAlive) — le piège `pkill` du 13/08 devient sans objet
+  mais la règle reste. Pour un run manuel (dev), bootout d'abord, sinon le
+  port est tenu. `ollama serve` : pas d'agent à nous, Ollama.app gère son
+  propre démarrage (vérifié : tourne sans login item classique).
+- **`com.merlin.warmup` supprimé** : il curl-ait le health d'un router :8101
+  mort ; son rôle (garder le modèle chaud) est couvert depuis le 15/08 par
+  `_preload_llm()` (`keep_alive:-1`). **Monitor réécrit** (`ops/check-ai-stack.sh`,
+  source de vérité dans le repo, `~/scripts/check-ai-stack.sh` = wrapper) :
+  Ollama, modèle épinglé via `/api/ps` (un ps vide = retour du cold start
+  6–7 s), bot :7860 ; iMessage via `notify.py` sur transition ok↔fail
+  seulement (état dans `/tmp/merlin-monitor.state`) — avant, il loggait
+  « 5 failed » toutes les 5 min depuis des semaines (403 Ko de log) sans que
+  personne ne le voie : un monitor qui ne notifie pas ne surveille rien.
+- **`com.wyoming.whisper`/`com.wyoming.piper` laissés en place** (chargés,
+  ports :10300/:10200 actifs). Wyoming est le protocole voix de Home
+  Assistant et le HA Yellow pourrait les consommer — à confirmer avant
+  suppression (piège classique : « périmé pour Merlin » ≠ « périmé »).
+- **Piège bash dans le monitor** : `((PASS++))` renvoie le statut 1 quand
+  PASS vaut 0, ce qui déclenchait le `|| fail` (« ok » ET « FAIL » sur la
+  même ligne de check). Remplacé par `PASS=$((PASS+1))`.

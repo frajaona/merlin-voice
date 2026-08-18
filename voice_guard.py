@@ -359,6 +359,10 @@ class GateCore:
         self._attentive_until = 0.0
         self.activator: str | None = None
         self._anchor: list = []
+        # Who the last accepted utterance was attributed to (enrolled profile
+        # name), None when identity wasn't established (gate off, embedding
+        # failure). Consumed by the transcript logger and the dashboard.
+        self.last_speaker: str | None = None
 
     # -- attention bookkeeping ------------------------------------------------
 
@@ -399,7 +403,12 @@ class GateCore:
     # -- decision -----------------------------------------------------------------
 
     def evaluate(self, text: str, embedding, duration: float) -> tuple:
-        """(accept, reason) for one transcribed utterance."""
+        """(accept, reason) for one transcribed utterance.
+
+        Also sets self.last_speaker to the attributed profile name — NULL
+        over a guessed name: paths without a verified identity leave None.
+        """
+        self.last_speaker = None
         words = normalize_words(text)
         wake = any(is_wake_word(w) for w in words)
         # Raw-audio channel: the wake-word engine may have caught "Merlin"
@@ -436,6 +445,7 @@ class GateCore:
         if self.activator is not None and attentive:
             if not verified:
                 self._touch_attention()
+                self.last_speaker = self.activator
                 return True, f"{self.activator} (court, non vérifié)"
             anchor_sim = self._anchor_sim(embedding)
             is_activator = (known and name == self.activator) or (
@@ -457,12 +467,14 @@ class GateCore:
                 elif known:
                     self._adapt(name, sim, embedding)
                 self._touch_attention()
+                self.last_speaker = who
                 extra = f", ancre={anchor_sim:.2f}" if anchor_sim is not None else ""
                 return True, f"{who} (sim={sim:.2f}{extra})"
             if wake and known:  # someone else takes the mic
                 self._bind(name, embedding)
                 self._adapt(name, sim, embedding)
                 self._touch_attention()
+                self.last_speaker = name
                 return True, f"éveil, nouvel activateur {name} (sim={sim:.2f})"
             return False, (
                 f"pas l'activateur ({self.activator}) — meilleur profil "
@@ -475,12 +487,14 @@ class GateCore:
                 self._bind(name, embedding)
                 self._adapt(name, sim, embedding)
                 self._touch_attention()
+                self.last_speaker = name
                 return True, f"éveil par {name} (sim={sim:.2f})"
             return False, f"voix inconnue (sim={0.0 if sim is None else sim:.2f})"
         # Short wake ("Merlin ?"): embeddings too unstable for the full bar.
         if name is not None and sim is not None and sim >= SHORT_WAKE_SIM:
             self._bind(name)  # anchor starts on the first verified utterance
             self._touch_attention()
+            self.last_speaker = name
             return True, f"éveil par {name} (court, sim={sim:.2f})"
         return False, f"voix inconnue (court, sim={0.0 if sim is None else sim:.2f})"
 
@@ -499,6 +513,7 @@ class GateCore:
                     logger.info(f"enrollment of '{pending}' complete — voice ACTIVE")
         self._bind(pending, embedding if duration >= VERIFY_MIN_SECS else None)
         self._touch_attention()
+        self.last_speaker = pending
         return True, f"inscription {pending}{note}"
 
 
@@ -650,7 +665,7 @@ class VoiceGate(FrameProcessor):
                 "event": "gate-decision",
                 "accepted": accept,
                 "reason": reason,
-                "speaker": self._core.activator if accept else None,
+                "speaker": self._core.last_speaker if accept else None,
                 "text": frame.text,
                 "ts": frame.timestamp,
             }))
@@ -659,6 +674,9 @@ class VoiceGate(FrameProcessor):
                 if self._log_fn:
                     self._log_fn(f"[filtré: {reason}] {frame.text}")
                 return
+            # Attribution for the transcript logger downstream (family mode:
+            # this is who actually spoke, not necessarily the activator).
+            frame.speaker_name = self._core.last_speaker
             logger.info(f"VoiceGate: accepted [{frame.text}] ({reason})")
             # A silent typed exchange (dashboard chat, sticky skip_tts) must
             # never mute a voice turn: spoken questions get spoken answers.

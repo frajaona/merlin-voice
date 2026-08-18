@@ -258,7 +258,10 @@ class UserTranscriptLogger(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, TranscriptionFrame):
-            await asyncio.to_thread(TRANSCRIPTS.append, self._session_id, "user", frame.text)
+            await asyncio.to_thread(
+                TRANSCRIPTS.append, self._session_id, "user", frame.text,
+                getattr(frame, "speaker_name", None),
+            )
         elif isinstance(frame, LLMMessagesAppendFrame):
             for m in frame.messages:
                 if m.get("role") == "user" and isinstance(m.get("content"), str):
