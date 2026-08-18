@@ -104,6 +104,33 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   `launchctl kickstart -k gui/$(id -u)/com.merlin.bot`. `com.wyoming.*`
   laissés (possiblement utilisés par Home Assistant — à confirmer).
 
+- **2026-08-18** — **Phrase d'arrêt + mode privé** (« Merlin chut », « Chut
+  Merlin », « Merlin stop », env `MERLIN_STOP_WORDS`) : coupe la réponse en
+  cours (~20 ms via le canal audio brut, le zipformer de l'éveil), ferme
+  l'échange et met le gate en **mode privé** — tout est rejeté et *rien n'est
+  journalisé avec contenu* jusqu'à une réactivation vérifiée (« Merlin, tu es
+  là ? » par une voix inscrite, phrase complète : pas de leniency courte, et
+  l'échec d'embedding ferme au lieu d'ouvrir — la seule inversion du
+  fail-open). N'importe quelle voix peut arrêter (asymétrie inverse de
+  l'éveil). Double canal comme l'éveil : brut (variantes mesurées
+  CHU/CHUS/SUT/CHUTE/SHUT) OU transcription Whisper (« chut/chute/stop » +
+  mot d'éveil). Vérifié bout-en-bout (probe : stop → « privé », la phrase
+  suivante absente de transcripts.db). Détails et calibration dans
+  `docs/DECISIONS.md`. Étape vers l'item « gating de Whisper hors attention »
+  (Whisper tourne encore en mode privé, mais ne stocke plus rien).
+  **Compléments (même jour)** : `MERLIN_STOP_ACTIVATOR_ONLY=1` (seul
+  l'activateur peut arrêter en cours d'échange, barre indulgente ; le canal
+  brut ne fait alors que couper le TTS, le hold attend la transcription
+  vérifiée — défaut : n'importe quelle voix) ; **`POST /api/stop
+  {"speaker": "<nom>"}`** (Bearer, scopé : seules les sessions dont cette
+  personne inscrite est l'activateur — 404 si non inscrite, événement
+  `gate-decision` poussé au dashboard) ; **bouton « 🤫 Chut »** dans le
+  dashboard (HTTP, marche depuis un navigateur sans la session WebRTC ;
+  envoie l'activateur courant appris du flux gate-decision). Tests :
+  `test_voice_guard.py` (activator-only), `test_dashboard_api.py`
+  (/api/stop scopé) ; vérifié en vrai (probe connectée + curl → hold +
+  message reçu ; 401/400/404 vérifiés).
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py

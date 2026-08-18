@@ -12,6 +12,10 @@ KWS models are English-trained and hear French "Merlin" as a different token
 sequence every time (measured: MELA/SELEN/MITTLEN/MALLA on four utterances) —
 no stable pattern to key on. The French zipformer hears it as MERLIN.
 
+The same decoder carries the stop channel ("Merlin chut/stop", either order):
+a StopState fire cuts the in-flight answer and puts the VoiceGate on privacy
+hold (see voice_guard.py) without waiting for Whisper.
+
 Validated on synthesized French speech (tools/test_wake_word.py):
 10/11 correct including "Berlin"/"merlan"/"merveille" rejections.
 """
@@ -45,10 +49,39 @@ MODEL_URL = (
 # (SMERLAND) and is then caught by the Whisper transcript channel instead.
 _WAKE_RE = re.compile(r"m[ae]{1,2}rl[iy]")
 
+# Stop channel: "stop" exact plus the measured decode variants of the
+# interjection "chut" — CHU, CHUS, SUT, CHUTE, SHUT on synthesized speech:
+# the final consonant is unstable and the fricative opens as S or SH. Bare
+# "su" is excluded ("j'ai su…" is normal French); "parachute" and "stoppe"
+# stay different words. Glued-adjacency forms cover the decoder gluing
+# neighbours (real "Salut Merlin" came out SALUMEERLIN). To be re-tuned on
+# real decodes (MERLIN_WAKE_DEBUG=1) if recall disappoints.
+_STOP_CHUT_RE = re.compile(r"^(chu|shu)(t|te|ts|s)?$|^sut$")
+_STOP_GLUED_RE = re.compile(r"(chut|shut|stop)e?m[ae]{1,2}rl|m[ae]{1,2}rl\w{0,4}(chut|shut|stop)")
+
+
+def _is_stop_word_raw(w: str) -> bool:
+    return w == "stop" or _STOP_CHUT_RE.match(w) is not None
+
+# A stop word alone counts if the wake word fired just before — "Merlin…
+# chut" often splits across a decoder reset (the wake fire resets the stream).
+STOP_AFTER_WAKE_SECS = 3.0
+
 
 def is_wake_text(text: str) -> bool:
     """True if a "merlin"-like sound appears in the decoded text."""
     return _WAKE_RE.search("".join(normalize_words(text))) is not None
+
+
+def is_stop_text(text: str) -> bool:
+    """True if a stop word appears in the decoded text (pairing with the
+    wake word is judged by the caller, not here). The glued regex runs
+    per-word — gluing happens inside one decoded token; matching the fully
+    joined text would false-positive on "parachute merlin"."""
+    words = normalize_words(text)
+    if any(_is_stop_word_raw(w) for w in words):
+        return True
+    return any(_STOP_GLUED_RE.search(w) for w in words)
 
 
 class WakeState:
@@ -62,6 +95,28 @@ class WakeState:
 
     def fired_within(self, secs: float) -> bool:
         return time.monotonic() - self._last <= secs
+
+    @property
+    def last(self) -> float:
+        return self._last
+
+
+class StopState(WakeState):
+    """WakeState plus a one-shot flag the pipeline consumes to cut TTS."""
+
+    def __init__(self):
+        super().__init__()
+        self._pending = False
+
+    def fire(self):
+        super().fire()
+        self._pending = True
+
+    def consume(self) -> bool:
+        if self._pending:
+            self._pending = False
+            return True
+        return False
 
 
 def _load_recognizer():
@@ -94,8 +149,9 @@ class WakeWordDetector:
 
     _SENTINEL = object()
 
-    def __init__(self, state: WakeState):
+    def __init__(self, state: WakeState, stop_state: StopState | None = None):
         self._state = state
+        self._stop_state = stop_state
         self._queue: queue.Queue = queue.Queue(maxsize=400)
         self._thread: threading.Thread | None = None
 
@@ -126,6 +182,7 @@ class WakeWordDetector:
             return
         logger.info("wake-word engine listening (French zipformer, raw audio)")
         stream = recognizer.create_stream()
+        segment_woke = False  # wake already fired for the current decode segment
         while True:
             item = self._queue.get()
             if item is self._SENTINEL:
@@ -143,12 +200,34 @@ class WakeWordDetector:
             # The last word of a live partial may be cut mid-word — a trailing
             # "MERL" could still become "merlan". Judge it only at endpoint.
             candidates = words if endpoint else words[:-1]
-            if is_wake_text(" ".join(candidates)):
-                logger.info(f"wake word heard in raw audio: [{text}]")
-                self._state.fire()
-                recognizer.reset(stream)  # don't re-fire on the same decode
+            cand_text = " ".join(candidates)
+            # Stop outranks wake: "merlin chut" in one segment fires the stop
+            # (the earlier in-segment wake fire is harmless — the gate checks
+            # the stop first). A lone stop word still counts shortly after a
+            # wake fire, for "Merlin… [pause] chut" split across segments.
+            if self._stop_state is not None and is_stop_text(cand_text) and (
+                is_wake_text(cand_text) or self._state.fired_within(STOP_AFTER_WAKE_SECS)
+            ):
+                logger.info(f"stop phrase heard in raw audio: [{text}]")
+                self._stop_state.fire()
+                recognizer.reset(stream)
+                segment_woke = False
+            elif is_wake_text(cand_text):
+                if not segment_woke:
+                    logger.info(f"wake word heard in raw audio: [{text}]")
+                    self._state.fire()
+                    segment_woke = True
+                # Keep decoding the segment instead of resetting: an early
+                # reset swallows a trailing stop word mid-word (measured:
+                # "Merlin, stop." reset at [MERLIN S] left only [TOP]). The
+                # gate reads the wake with 3 s of slack, nothing needs the
+                # fire-and-reset. segment_woke prevents refiring meanwhile.
+                if endpoint:
+                    recognizer.reset(stream)
+                    segment_woke = False
             elif endpoint:
                 recognizer.reset(stream)
+                segment_woke = False
 
 
 class WakeWordListener(FrameProcessor):
@@ -156,17 +235,28 @@ class WakeWordListener(FrameProcessor):
 
     Placement: right after transport.input(), before the VAD — it must hear
     everything, not only VAD-approved segments.
+
+    When a stop_state is wired, a raw-audio stop fire is acted on here within
+    one audio frame (~20 ms): the in-flight answer is interrupted and on_stop
+    (GateCore.enter_hold) is called — no waiting for VAD stop + Whisper.
     """
 
-    def __init__(self, detector: WakeWordDetector):
+    def __init__(self, detector: WakeWordDetector, *, stop_state: StopState | None = None,
+                 on_stop=None):
         super().__init__()
         self._detector = detector
+        self._stop_state = stop_state
+        self._on_stop = on_stop
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, InputAudioRawFrame):
             self._detector.start()
             self._detector.feed(frame.audio, frame.sample_rate)
+            if self._stop_state is not None and self._stop_state.consume():
+                await self.broadcast_interruption()
+                if self._on_stop is not None:
+                    self._on_stop()
         elif isinstance(frame, (EndFrame, CancelFrame)):
             self._detector.stop()
         await self.push_frame(frame, direction)

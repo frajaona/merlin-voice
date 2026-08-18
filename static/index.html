@@ -107,6 +107,13 @@
       padding: 7px 18px; border-radius: 20px; cursor: pointer; font-size: 0.8rem;
       display: none;
     }
+    /* Always visible: it stops ALL live sessions over HTTP, so it works from
+       a browser that isn't the one holding the WebRTC connection. */
+    #btn-stop {
+      background: transparent; border: 1px solid var(--red, #b3423f); color: var(--red, #b3423f);
+      padding: 7px 18px; border-radius: 20px; cursor: pointer; font-size: 0.8rem;
+    }
+    #voice-buttons { display: flex; gap: 10px; }
     audio { display: none; }
 
     /* ---- conversation ---- */
@@ -266,7 +273,10 @@
     <section id="panel-voice">
       <div id="orb">🎙</div>
       <div id="status">Appuie pour te connecter</div>
-      <button id="btn-disconnect">Déconnecter</button>
+      <div id="voice-buttons">
+        <button id="btn-stop" title="Coupe et passe en mode privé (comme « Merlin, chut »)">🤫 Chut</button>
+        <button id="btn-disconnect">Déconnecter</button>
+      </div>
       <!-- No `muted` attribute: it's boolean, muted="false" still mutes -->
       <audio id="audio" autoplay playsinline></audio>
     </section>
@@ -346,6 +356,27 @@
     $('token-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('token-save').click(); });
 
     const authHeaders = (extra = {}) => ({ 'Authorization': 'Bearer ' + token, ...extra });
+
+    // ---- panic stop ("Merlin chut" as a button) ------------------------------
+    // Plain HTTP on purpose: works even from a browser without the WebRTC
+    // session. Scoped: /api/stop requires the person whose exchange to stop —
+    // we send the current activator learned from the gate-decision feed.
+    let lastSpeaker = null;
+    $('btn-stop').addEventListener('click', async () => {
+      if (!lastSpeaker) return setStatus('Aucun échange en cours à arrêter');
+      const resp = await fetch('/api/stop', {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ speaker: lastSpeaker }),
+      }).catch(() => null);
+      if (!resp || resp.status === 401) return showTokenPrompt('Token requis pour arrêter.');
+      if (resp.ok) {
+        const r = await resp.json();
+        setStatus(r.stopped
+          ? `Mode privé pour ${r.speaker} — « Merlin, tu es là ? » pour reprendre`
+          : `Aucune session active pour ${r.speaker}`);
+      }
+    });
 
     // ---- WebRTC + RTVI -----------------------------------------------------
     let pc = null, pcId = null, dc = null, connected = false, pingTimer = null;
@@ -505,6 +536,9 @@
     function autoscroll(el, stick) { if (stick) el.scrollTop = el.scrollHeight; }
 
     function onGateDecision(d) {
+      // Current activator, for the scoped "Chut" button (/api/stop needs a
+      // person). Rejections don't rebind, so only accepted turns update it.
+      if (d.accepted && d.speaker) lastSpeaker = d.speaker;
       // Gate feed (newest first)
       const stick = scrolledToBottom(gateFeed);
       const entry = document.createElement('div');

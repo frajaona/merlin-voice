@@ -3,8 +3,9 @@
 Local French voice assistant: Pipecat pipeline (WebRTC ← phone browser) →
 Silero VAD → MLX Whisper (fp16 turbo) → Ollama (qwen, `reasoning_effort:"none"`)
 → Kokoro TTS. Public-use hardening in `voice_guard.py` (household speaker gate,
-attention gate with activator binding) and `wake_word.py` (raw-audio wake-word
-engine). Tool plugins auto-load from `plugins/*.py`.
+attention gate with activator binding, stop phrase "Merlin chut/stop" → privacy
+hold) and `wake_word.py` (raw-audio wake-word + stop-phrase engine). Tool
+plugins auto-load from `plugins/*.py`.
 
 ## Read these before making changes
 
@@ -34,8 +35,11 @@ engine). Tool plugins auto-load from `plugins/*.py`.
   (Ollama, modèle épinglé, bot) and iMessages on ok↔fail transitions.
 - Dashboard: `https://<host>:7860/` (vanilla JS, RTVI sur le data channel).
   Auth : Bearer token (`data/auth-token` ou `MERLIN_TOKEN`) exigé sur
-  `/api/offer` et `/api/workshop*` (`dashboard_api.py`). Sonde protocole :
-  `tools/probe_rtvi.py` (bot lancé requis).
+  `/api/offer`, `/api/workshop*` et `/api/stop` (`dashboard_api.py`).
+  `POST /api/stop {"speaker": "<nom>"}` = « Merlin chut » en HTTP, scopé :
+  met en mode privé les sessions dont cette personne inscrite est
+  l'activateur (bouton « 🤫 Chut » du dashboard → activateur courant).
+  Sonde protocole : `tools/probe_rtvi.py` (bot lancé requis).
 - Restart: `launchctl kickstart -k gui/$(id -u)/com.merlin.bot` (a plain
   `kill` of the port PID also works — launchd relaunches it). Do NOT
   `pkill -f "python bot.py"` (macOS process name is capital-P `Python`; a
@@ -48,6 +52,8 @@ engine). Tool plugins auto-load from `plugins/*.py`.
   filter them; they double as the STT/gate tuning dataset. `speaker` column
   (2026-08-18): enrolled name the gate attributed the turn to, NULL when
   unknown (assistant rows, filtered turns, `[clavier]`, fail-open paths).
+  Exception: turns rejected during the privacy hold ("Merlin chut") are NOT
+  stored at all — by design, do not "fix" this.
 - Voice profiles: `tools/voice_profile.py [status|enroll|cancel|reset]`
   (enroll on a complete profile opens a diversity top-up).
 - Tests (offline, no bot needed): `venv/bin/python tools/test_voice_guard.py`

@@ -24,7 +24,24 @@ Rejected utterances are still written to the transcript store with a
 "[filtré: …]" prefix so the STT test set keeps its misrecognition examples
 and thresholds can be tuned from real data.
 
+Stop phrase / privacy hold: a stop word ("chut", "stop") in the same
+utterance as the wake word ("Merlin chut", "Chut Merlin", "Merlin stop")
+cuts the bot mid-sentence, closes the exchange and enters a privacy hold:
+everything is rejected AND nothing is logged with content until an enrolled
+voice re-activates with a full verified wake sentence ("Merlin, tu es là ?").
+Any voice can stop — the failure asymmetry is the inverse of the wake word
+(a false stop costs one re-wake; a missed stop is a privacy failure) — but
+lifting the hold is stricter than a normal wake: no short-wake leniency, and
+embedding failure fails CLOSED here (the one spot where it does).
+
 Environment knobs (all optional):
+    MERLIN_STOP_WORDS         comma list of stop words, each active when
+                              paired with the wake word ("chut,chute,stop")
+    MERLIN_STOP_ACTIVATOR_ONLY "1": mid-exchange only the activator's voice
+                              may stop (lenient bar — stop phrases are short;
+                              embedding failure still stops; the raw-audio
+                              channel then only cuts TTS, the hold waits for
+                              the verified transcript). Default: any voice.
     MERLIN_STT_MODEL          HF repo of the MLX Whisper model
     MERLIN_STT_PROMPT_EXTRA   extra vocabulary appended to the initial prompt
     MERLIN_SPEAKER_GATE       "off" to disable speaker verification
@@ -76,12 +93,32 @@ WAKE_EXCLUDE = {"merlan", "merlans", "merlant", "merle", "merles", "merlu", "mer
 def is_wake_word(word: str) -> bool:
     return word.startswith(WAKE_PREFIX) and word not in WAKE_EXCLUDE
 
+
+# Exact-word match, not prefix: "stoppe la musique" or "parachute" must not
+# stop the session. "Merlin stop-kill" works because normalize_words splits
+# on the hyphen and "stop" matches. "chute" is in the default because Whisper
+# transcribes the interjection "Chut !" as "chute." (measured) — the cost is
+# a false stop on "Merlin … chute …" (rare, and a false stop is one re-wake).
+STOP_WORDS = frozenset(
+    w.strip() for w in os.getenv("MERLIN_STOP_WORDS", "chut,chute,stop").lower().split(",") if w.strip()
+)
+
+# Gate reasons for the stop flow — VoiceGate keys logging behavior on these
+# (the stop command itself is logged, held-back turns are not).
+STOP_REASON = "stop → mode privé"
+HOLD_REASON = "privé"
+
+
+def has_stop_word(words: list) -> bool:
+    return any(w in STOP_WORDS for w in words)
+
 STT_MODEL = os.getenv("MERLIN_STT_MODEL", "mlx-community/whisper-large-v3-turbo")
 SPEAKER_GATE_ENABLED = os.getenv("MERLIN_SPEAKER_GATE", "on").lower() not in ("off", "0", "false")
 # Calibrated 2026-08-13 on real data: owner's utterances score 0.72-0.89
 # against his profile, another speaker on the same phone scored 0.08-0.54.
 SPEAKER_THRESHOLD = float(os.getenv("MERLIN_SPEAKER_THRESHOLD", "0.60"))
 FAMILY_MODE = os.getenv("MERLIN_FAMILY_MODE", "0").lower() in ("1", "on", "true")
+STOP_ACTIVATOR_ONLY = os.getenv("MERLIN_STOP_ACTIVATOR_ONLY", "0").lower() in ("1", "on", "true")
 REQUIRE_WAKE = os.getenv("MERLIN_REQUIRE_WAKE", "1").lower() not in ("off", "0", "false")
 FOLLOWUP_SECS = float(os.getenv("MERLIN_FOLLOWUP_SECS", "12"))
 QUESTION_SECS = float(os.getenv("MERLIN_QUESTION_SECS", "30"))
@@ -339,6 +376,7 @@ class GateCore:
         speaker_gate: bool = SPEAKER_GATE_ENABLED,
         threshold: float = SPEAKER_THRESHOLD,
         family_mode: bool = FAMILY_MODE,
+        stop_activator_only: bool = STOP_ACTIVATOR_ONLY,
         require_wake: bool = REQUIRE_WAKE,
         followup_secs: float = FOLLOWUP_SECS,
         question_secs: float = QUESTION_SECS,
@@ -351,6 +389,7 @@ class GateCore:
         self._speaker_gate = speaker_gate
         self._threshold = threshold
         self._family_mode = family_mode
+        self._stop_activator_only = stop_activator_only
         self._require_wake = require_wake
         self._followup_secs = followup_secs
         self._question_secs = question_secs
@@ -363,6 +402,9 @@ class GateCore:
         # name), None when identity wasn't established (gate off, embedding
         # failure). Consumed by the transcript logger and the dashboard.
         self.last_speaker: str | None = None
+        # Privacy hold: set by the stop phrase (transcript or raw channel).
+        # While set, everything is rejected and content is never logged.
+        self._hold_since: float | None = None
 
     # -- attention bookkeeping ------------------------------------------------
 
@@ -400,6 +442,79 @@ class GateCore:
         if name and sim is not None and sim >= ADAPT_SIM:
             self.household.people[name].enroll(embedding)
 
+    # -- privacy hold -------------------------------------------------------
+
+    @property
+    def on_hold(self) -> bool:
+        return self._hold_since is not None
+
+    def _stop_allowed(self, embedding) -> bool:
+        """Anyone may stop unless MERLIN_STOP_ACTIVATOR_ONLY: then, mid-
+        exchange, the stopping voice must look like the activator — at the
+        lenient SHORT_WAKE_SIM bar against their profile or the live anchor,
+        because stop phrases are short and a strict bar would miss real
+        stops. No activator bound -> nothing to hijack, anyone stops.
+        Embedding failure -> stop anyway (missing a stop is the privacy
+        failure; a false stop costs one re-wake)."""
+        if not self._stop_activator_only or self.activator is None:
+            return True
+        if embedding is None:
+            return True
+        name, sim = self.household.best_match(embedding)
+        if name == self.activator and sim is not None and sim >= SHORT_WAKE_SIM:
+            return True
+        anchor_sim = self._anchor_sim(embedding)
+        return anchor_sim is not None and anchor_sim >= SHORT_WAKE_SIM
+
+    def raw_stop(self):
+        """Raw-audio stop fire — no voice identity available on that channel.
+        Anyone-mode: hold immediately. Activator-only: leave the hold to the
+        transcript pass, which can check the voice (the raw channel already
+        interrupted the TTS either way, same authority as barge-in)."""
+        if not self._stop_activator_only:
+            self.enter_hold()
+
+    def enter_hold(self):
+        """Stop everything: close the exchange, reject and don't log content
+        until an enrolled voice lifts the hold with a verified wake sentence.
+        Called from evaluate (transcript stop phrase) and from the raw-audio
+        stop channel (WakeWordListener callback)."""
+        if self._hold_since is None:
+            logger.info("VoiceGate: privacy hold ON (stop phrase)")
+        self._bind(None)
+        self._attentive_until = 0.0
+        self._hold_since = self._now()
+
+    def _evaluate_on_hold(self, transcript_wake: bool, embedding, duration: float, words: list) -> tuple:
+        """Only a verified activation lifts the hold: wake word (transcript,
+        or raw channel fired AFTER the hold started), enrolled voice at the
+        full bar. No short-wake leniency, and no embedding = no lift (the
+        fail-open bias inverts under the hold: staying muted is the safe
+        failure). Enrollment is suspended too — never absorb a guest."""
+        wake = transcript_wake
+        if not wake and self._wake_state is not None:
+            wake = getattr(self._wake_state, "last", 0.0) > self._hold_since
+        if not wake:
+            return False, HOLD_REASON
+        if not self._speaker_gate:
+            # No identity available at all: the wake word alone lifts.
+            self._hold_since = None
+            self._touch_attention()
+            logger.info("VoiceGate: privacy hold lifted (speaker gate off)")
+            return True, "fin du mode privé (gate locuteur désactivé)"
+        if embedding is None or duration < VERIFY_MIN_SECS or len(words) < VERIFY_MIN_WORDS:
+            return False, HOLD_REASON
+        name, sim = self.household.best_match(embedding)
+        if name is None or sim is None or sim < self._threshold:
+            return False, HOLD_REASON
+        self._hold_since = None
+        self._bind(name, embedding)
+        self._adapt(name, sim, embedding)
+        self._touch_attention()
+        self.last_speaker = name
+        logger.info(f"VoiceGate: privacy hold lifted by {name}")
+        return True, f"éveil par {name}, fin du mode privé (sim={sim:.2f})"
+
     # -- decision -----------------------------------------------------------------
 
     def evaluate(self, text: str, embedding, duration: float) -> tuple:
@@ -410,12 +525,26 @@ class GateCore:
         """
         self.last_speaker = None
         words = normalize_words(text)
-        wake = any(is_wake_word(w) for w in words)
+        transcript_wake = any(is_wake_word(w) for w in words)
+        wake = transcript_wake
         # Raw-audio channel: the wake-word engine may have caught "Merlin"
         # even when Whisper mangled it. The fire must fall inside this
         # utterance's window (its duration plus a little slack).
         if not wake and self._wake_state is not None:
             wake = self._wake_state.fired_within(duration + 3.0)
+
+        # Stop phrase, before everything else — by default any voice may
+        # stop, no verification (a false stop costs one re-wake; a missed
+        # stop is the privacy failure). Requires the wake word in (or
+        # raw-heard around) the same utterance so a lone "chut"/"stop" in
+        # conversation passes. MERLIN_STOP_ACTIVATOR_ONLY narrows it.
+        if has_stop_word(words) and wake:
+            if self._stop_allowed(embedding):
+                self.enter_hold()
+                return False, STOP_REASON
+            return False, "stop refusé (pas l'activateur)"
+        if self._hold_since is not None:
+            return self._evaluate_on_hold(transcript_wake, embedding, duration, words)
 
         attentive = not self._require_wake or self._attentive()
         if not attentive:
@@ -658,18 +787,27 @@ class VoiceGate(FrameProcessor):
                 getattr(frame, "speaker_embedding", None),
                 getattr(frame, "speech_secs", 0.0),
             )
+            if reason == STOP_REASON:
+                # Cut any in-flight answer right now (someone walked in).
+                await self.broadcast_interruption()
             # Live feed for the dashboard: the RTVI observer converts this
             # frame into a "server-message" on the data channel. No-op when
             # RTVI is disabled (the frame just reaches the transport and dies).
+            # Under the hold the utterance content stays out of the feed too.
             await self.push_frame(RTVIServerMessageFrame(data={
                 "event": "gate-decision",
                 "accepted": accept,
                 "reason": reason,
                 "speaker": self._core.last_speaker if accept else None,
-                "text": frame.text,
+                "text": "(privé)" if reason == HOLD_REASON else frame.text,
                 "ts": frame.timestamp,
             }))
             if not accept:
+                if reason == HOLD_REASON:
+                    # Privacy hold: no content anywhere — not the log, not
+                    # the transcript store (the whole point of the hold).
+                    logger.info("VoiceGate: dropped (mode privé)")
+                    return
                 logger.info(f"VoiceGate: dropped [{frame.text}] — {reason}")
                 if self._log_fn:
                     self._log_fn(f"[filtré: {reason}] {frame.text}")

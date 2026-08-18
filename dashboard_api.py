@@ -60,6 +60,69 @@ async def require_token(request: Request):
 router = APIRouter(prefix="/api/workshop", dependencies=[Depends(require_token)])
 
 
+# ---------------------------------------------------------------------------
+# Panic stop: POST /api/stop {"speaker": "<name>"} puts the session(s) whose
+# current activator is that enrolled person on privacy hold and cuts any
+# in-flight answer — "Merlin chut" over HTTP, scoped to one person's
+# exchange. The token authenticates the household; the speaker scopes the
+# effect (another member's open exchange is left alone).
+# ---------------------------------------------------------------------------
+
+# session_id -> {"core": GateCore, "rtvi": RTVI processor}. Duck-typed so the
+# offline tests can register fakes; bot.py registers each pipeline at start.
+_sessions: dict = {}
+
+# Enrolled-person source of truth (one .npz per profile). Module var so the
+# offline tests can point it at a temp dir — never at the real profiles.
+VOICES_DIR = REPO / "data" / "voices"
+
+
+def register_session(session_id: str, core, rtvi):
+    _sessions[session_id] = {"core": core, "rtvi": rtvi}
+
+
+def unregister_session(session_id: str):
+    _sessions.pop(session_id, None)
+
+
+def _enrolled_names() -> set:
+    return {p.stem for p in VOICES_DIR.glob("*.npz")}
+
+
+stop_router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
+
+
+@stop_router.post("/stop")
+async def stop_person(body: dict):
+    speaker = str(body.get("speaker", "")).strip()
+    if not speaker:
+        raise HTTPException(status_code=400, detail="speaker requis")
+    if speaker not in _enrolled_names():
+        raise HTTPException(status_code=404, detail=f"personne inconnue : {speaker}")
+    stopped = []
+    for sid, s in list(_sessions.items()):
+        if getattr(s["core"], "activator", None) != speaker:
+            continue
+        s["core"].enter_hold()
+        try:
+            await s["rtvi"].interrupt_bot()
+            # Same shape as the VoiceGate's live gate-decision events so the
+            # dashboard feed renders it with no extra client logic.
+            await s["rtvi"].send_server_message({
+                "event": "gate-decision",
+                "accepted": False,
+                "reason": "stop → mode privé (requête HTTP)",
+                "speaker": None,
+                "text": f"(stop manuel — {speaker})",
+                "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            })
+        except Exception as e:  # session mid-teardown: the hold is already set
+            logger.warning(f"stop: session {sid}: {e}")
+        stopped.append(sid)
+    logger.info(f"privacy hold via HTTP for '{speaker}' on {len(stopped)} session(s)")
+    return {"stopped": len(stopped), "speaker": speaker}
+
+
 def _active_plugins() -> list:
     return sorted(
         p.stem for p in (REPO / "plugins").glob("*.py") if not p.name.startswith("_")

@@ -20,7 +20,14 @@ from fastapi import BackgroundTasks, Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from dashboard_api import get_token, require_token, router as workshop_router
+from dashboard_api import (
+    get_token,
+    register_session,
+    require_token,
+    router as workshop_router,
+    stop_router,
+    unregister_session,
+)
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
@@ -70,7 +77,7 @@ from voice_guard import (
     VoiceGate,
     normalize_words as _normalize_words,
 )
-from wake_word import WakeState, WakeWordDetector, WakeWordListener
+from wake_word import StopState, WakeState, WakeWordDetector, WakeWordListener
 
 # Raw-audio wake-word engine (French zipformer) — "off" falls back to
 # transcript-only wake detection.
@@ -511,14 +518,19 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     # logger sits after it so accepted turns are logged clean; the gates log
     # their own rejections with a "[filtré: …]" prefix.
     wake_state = WakeState() if RAW_WAKE else None
-    voice_gate = VoiceGate(
-        core=GateCore(HouseholdProfiles(), last_bot, wake_state=wake_state),
-        log_fn=_log_filtered,
-    )
+    stop_state = StopState() if RAW_WAKE else None
+    gate_core = GateCore(HouseholdProfiles(), last_bot, wake_state=wake_state)
+    voice_gate = VoiceGate(core=gate_core, log_fn=_log_filtered)
 
     stages = [transport.input()]
     if wake_state is not None:
-        stages.append(WakeWordListener(WakeWordDetector(wake_state)))
+        # The stop phrase rides the same raw-audio decoder as the wake word;
+        # on fire the listener cuts TTS immediately and puts the gate on hold.
+        stages.append(WakeWordListener(
+            WakeWordDetector(wake_state, stop_state),
+            stop_state=stop_state,
+            on_stop=gate_core.raw_stop,
+        ))
 
     pipeline = Pipeline(stages + [
         vad,
@@ -575,9 +587,14 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         logger.info("Client disconnected — stopping pipeline")
         await worker.cancel()
 
-    runner = WorkerRunner()
-    await runner.add_workers(worker)
-    await runner.run()
+    # Expose this session to POST /api/stop (dashboard button / HTTP).
+    register_session(session_id, gate_core, worker.rtvi)
+    try:
+        runner = WorkerRunner()
+        await runner.add_workers(worker)
+        await runner.run()
+    finally:
+        unregister_session(session_id)
 
 
 def _preload_llm():
@@ -647,6 +664,7 @@ async def health():
 
 
 app.include_router(workshop_router)
+app.include_router(stop_router)
 
 
 @asynccontextmanager

@@ -456,3 +456,90 @@ skills), et à terme approuver à distance.
 - **Piège bash dans le monitor** : `((PASS++))` renvoie le statut 1 quand
   PASS vaut 0, ce qui déclenchait le `|| fail` (« ok » ET « FAIL » sur la
   même ligne de check). Remplacé par `PASS=$((PASS+1))`.
+
+## 2026-08-18 — Phrase d'arrêt et mode privé
+
+- **Cas d'usage** : quelqu'un entre dans la pièce pendant qu'on parle à
+  Merlin — il faut pouvoir couper la reconnaissance d'une phrase. Trois
+  expositions traitées : la fenêtre d'attention ouverte (12–30 s), la réponse
+  TTS en cours, et surtout la journalisation : Whisper transcrit tout et tout
+  finit dans transcripts.db (même `[filtré:]`) — la conversation de l'invité
+  y serait. Le mode privé n'enregistre RIEN avec contenu.
+- **Asymétrie inversée, décision centrale.** Le gate préfère ne pas agir ;
+  pour un STOP c'est l'inverse : un faux stop coûte un ré-éveil, un stop raté
+  est l'échec de vie privée. Donc : n'importe quelle voix peut arrêter, sans
+  vérification, même en phrase courte. Et symétriquement, **lever** le mode
+  privé est plus strict qu'un éveil normal : phrase complète vérifiée par une
+  voix inscrite, pas de barre courte (« Merlin ? » à sim 0,77 par une voix de
+  synthèse a été observé — la leniency courte ne doit jamais lever le privé),
+  échec d'embedding = fermé (seul endroit où le fail-open s'inverse),
+  inscription suspendue (ne jamais absorber un invité).
+- **Écarté : outil LLM** (« Merlin arrête d'écouter ») — lent, probabiliste,
+  et dépend de la chaîne qu'on veut justement court-circuiter. Un stop est un
+  réflexe, pas un raisonnement.
+- **Mots choisis** : « chut » et « stop », appariés au mot d'éveil dans le
+  même énoncé (les deux ordres). « pause » écarté (collision future : «
+  Merlin, mets le minuteur en pause »). « stop-kill » (idée Fred) marche via
+  le token « stop » après normalisation. Un « chut » seul ne coupe rien
+  (chuchoter à un enfant en plein échange ne doit pas tuer la session).
+- **Double canal, comme l'éveil.** Brut (zipformer) : coupe le TTS en ~20 ms
+  via `broadcast_interruption()` depuis le WakeWordListener et pose le hold
+  par callback (`GateCore.enter_hold`), sans attendre VAD+Whisper.
+  Transcription : filet de sécurité dans `GateCore.evaluate`, avant toute
+  autre logique.
+- **Calibration mesurée (synthèse Kokoro + say)** : le zipformer décode
+  l'interjection « chut » en CHU / CHUS / SUT / CHUTE / **SHUT** (la
+  fricative sort en S ou SH, la consonne finale est instable) — regex de
+  variantes par mot exact, « su » nu exclu (« j'ai su… »), « parachute » et
+  « stoppe » restent des mots différents. **Whisper transcrit « Chut ! » en
+  « chute. »** → « chute » ajouté au défaut `MERLIN_STOP_WORDS` (faux stop
+  possible sur « Merlin … chute … », accepté : coût = un ré-éveil).
+- **Bug trouvé au passage dans le moteur d'éveil** : le reset du stream au
+  moment du fire de l'éveil avalait le mot suivant en cours de décodage
+  (« Merlin, stop. » resetté à [MERLIN S] ne laissait que [TOP]). Le fire ne
+  reset plus ; un flag par segment empêche le re-fire, le reset se fait à
+  l'endpoint. Le gate lisant l'éveil avec 3 s de marge, rien ne dépendait du
+  fire-et-reset.
+- **Piège de test** : l'endpoint du zipformer peut demander >2 s de silence
+  de fin — les tests streaming paddent à 3,5 s (en prod l'audio ne s'arrête
+  jamais).
+
+## 2026-08-18 — Compléments du stop : restriction, HTTP, bouton
+
+- **`MERLIN_STOP_ACTIVATOR_ONLY` (défaut 0)** : demande de Fred (« seul
+  celui qui a lancé l'échange peut l'arrêter »). Implémenté en option, pas en
+  défaut, car il affaiblit la garantie de vie privée : les phrases d'arrêt
+  sont courtes (~1 s) et leur embedding est instable (un vrai « Merlin ? » a
+  déjà scoré 0,22 contre son propre profil) — toute vérification stricte
+  raterait de vrais stops. Compromis retenu : barre indulgente
+  (SHORT_WAKE_SIM 0,35, profil de l'activateur OU ancre de l'échange), échec
+  d'embedding = stop quand même, pas d'activateur lié = tout le monde peut
+  arrêter (rien à détourner). Le canal audio brut n'a aucune identité de
+  voix : dans ce mode il ne fait que couper le TTS (même autorité que le
+  barge-in, ouvert à tous) et laisse la décision de hold à la passe
+  transcription. Un stop refusé répond « stop refusé (pas l'activateur) »
+  sans traiter l'énoncé (surtout ne pas re-binder l'échange sur le refusé).
+- **`POST /api/stop`** (Bearer) : le token = autorité du foyer, comme le
+  clavier du dashboard qui contourne le VoiceGate — la restriction
+  activator-only ne s'y applique pas. Coupe et met en hold TOUTES les
+  sessions actives (registre `dashboard_api.register_session`, rempli par
+  bot.py à chaque pipeline, nettoyé en finally). Pousse un événement
+  `gate-decision` (même forme que ceux du VoiceGate) sur le data channel —
+  le dashboard l'affiche sans logique cliente nouvelle. Endpoint dans
+  dashboard_api.py (pas bot.py) pour rester testable hors-ligne avec des
+  fakes duck-typés (`tools/test_dashboard_api.py`).
+- **Bouton « 🤫 Chut »** (dashboard) : HTTP volontairement, pas RTVI —
+  marche depuis un navigateur qui n'a PAS la session WebRTC (cas réel : le
+  téléphone porte la session, on coupe depuis le laptop), et arrête tout.
+  Toujours visible, contrairement à « Déconnecter ».
+- Vérifié en vrai : probe connectée + `curl /api/stop` → `{"stopped":1}`,
+  hold posé, la probe reçoit le `gate-decision` « (stop manuel) ».
+- **Scope par personne (demande Fred, même jour)** : `POST /api/stop` exige
+  `{"speaker": "<nom>"}` — nom validé contre les profils inscrits
+  (`data/voices/*.npz`, glob direct pour rester importable sans pipecat dans
+  les tests hors-ligne ; 404 sinon, 400 sans nom) et n'arrête que les
+  sessions dont cette personne est l'**activateur** (les échanges des autres
+  membres continuent). Le bouton du dashboard envoie l'activateur courant
+  appris des événements `gate-decision` acceptés ; sans échange connu il ne
+  fait rien (« Aucun échange en cours à arrêter »). Un activateur périmé
+  côté client reste inoffensif : au pire un hold en trop, un ré-éveil.

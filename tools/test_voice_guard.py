@@ -195,6 +195,135 @@ def test_family_mode_and_short_wake():
         print("ok: family mode, short wake, fail-open")
 
 
+def test_stop_and_privacy_hold():
+    clock = FakeClock()
+    fred, wife, stranger = unit(1), unit(2), unit(3)
+    with tempfile.TemporaryDirectory() as tmp:
+        household = make_household(tmp)
+        household.finish_enrollment()
+        enroll_voice(household, "fred", fred, 100)
+        enroll_voice(household, "camille", wife, 200)
+        core = make_core(household, clock)
+
+        # Open an exchange, then stop it mid-conversation.
+        ok, _ = core.evaluate("Merlin quelle heure est-il", near(fred, 1), 2.0)
+        assert ok
+        clock.t += 2
+        ok, why = core.evaluate("Merlin chut", near(fred, 2), 1.0)
+        assert not ok and why == "stop → mode privé", why
+        assert core.on_hold and core.activator is None
+
+        # Under hold: nothing passes, nothing is attributed — even the
+        # activator's own voice, even with the wake word but a short bar.
+        clock.t += 2
+        ok, why = core.evaluate("bonjour entre donc je t'en prie", near(fred, 3), 2.5)
+        assert not ok and why == "privé", why
+        assert core.last_speaker is None
+        clock.t += 2
+        ok, why = core.evaluate("Merlin ?", near(fred, 4), 0.6)  # short: no leniency here
+        assert not ok and why == "privé", why
+        # Unknown voice can't lift it (guest saying "Merlin" at the demo).
+        clock.t += 2
+        ok, why = core.evaluate("Merlin tu m'entends", near(stranger, 5), 2.0)
+        assert not ok and why == "privé", why
+        # Embedding failure fails CLOSED under hold (inverse of the wake bias).
+        clock.t += 2
+        ok, why = core.evaluate("Merlin tu es là", None, 2.0)
+        assert not ok and why == "privé", why
+        assert core.on_hold
+
+        # A verified enrolled wake sentence lifts the hold and activates.
+        clock.t += 2
+        ok, why = core.evaluate("Merlin on peut reprendre maintenant", near(fred, 6), 2.5)
+        assert ok and "fin du mode privé" in why, why
+        assert not core.on_hold and core.activator == "fred" and core.last_speaker == "fred"
+
+        # Stop works from ANY voice (privacy asymmetry), in either word order,
+        # and "Merlin stop-kill" matches via the "stop" token.
+        clock.t += 2
+        ok, why = core.evaluate("Chut Merlin", near(stranger, 7), 1.2)
+        assert not ok and why == "stop → mode privé", why
+        assert core.on_hold
+        clock.t += 2
+        ok, _ = core.evaluate("Merlin on peut reprendre maintenant", near(wife, 8), 2.5)
+        assert ok
+        clock.t += 2
+        ok, why = core.evaluate("Merlin stop-kill", near(wife, 9), 1.5)
+        assert not ok and why == "stop → mode privé", why
+
+        # A lone "chut" (no wake word around) never stops — someone shushing
+        # a kid mid-exchange must not kill the session.
+        clock.t += 2
+        ok, _ = core.evaluate("Merlin on peut reprendre maintenant", near(fred, 10), 2.5)
+        assert ok
+        clock.t += 2
+        ok, why = core.evaluate("chut les enfants on se calme", near(fred, 11), 2.0)
+        assert ok, why  # normal mid-exchange turn, not a stop
+        assert not core.on_hold
+
+        # Raw-audio path: enter_hold() called directly (listener callback).
+        core.enter_hold()
+        assert core.on_hold and core.activator is None
+        clock.t += 2
+        ok, why = core.evaluate("il fait beau aujourd'hui", near(fred, 12), 2.0)
+        assert not ok and why == "privé", why
+        print("ok: stop phrase + privacy hold (any voice stops, verified wake lifts)")
+
+
+def test_stop_activator_only():
+    """MERLIN_STOP_ACTIVATOR_ONLY=1: mid-exchange, only the activator stops."""
+    clock = FakeClock()
+    fred, wife, stranger = unit(1), unit(2), unit(3)
+    with tempfile.TemporaryDirectory() as tmp:
+        household = make_household(tmp)
+        household.finish_enrollment()
+        enroll_voice(household, "fred", fred, 100)
+        enroll_voice(household, "camille", wife, 200)
+        core = make_core(household, clock, stop_activator_only=True)
+
+        # No activator bound: nothing to hijack, anyone may stop.
+        ok, why = core.evaluate("Merlin chut", near(stranger, 1), 1.2)
+        assert not ok and why == "stop → mode privé", why
+        assert core.on_hold
+
+        clock.t += 2
+        ok, _ = core.evaluate("Merlin on peut reprendre maintenant", near(fred, 2), 2.5)
+        assert ok and core.activator == "fred"
+
+        # Enrolled but not the activator -> stop refused, session intact.
+        clock.t += 2
+        ok, why = core.evaluate("Merlin chut", near(wife, 3), 1.2)
+        assert not ok and why == "stop refusé (pas l'activateur)", why
+        assert not core.on_hold and core.activator == "fred"
+        clock.t += 2
+        ok, why = core.evaluate("Chut Merlin", near(stranger, 4), 1.2)
+        assert not ok and "refusé" in why and not core.on_hold, why
+
+        # The raw-audio channel has no voice identity: inert in this mode
+        # (it only cut the TTS; the transcript pass decides the hold).
+        core.raw_stop()
+        assert not core.on_hold
+
+        # Embedding failure stops anyway: a missed stop is the worse failure.
+        clock.t += 2
+        ok, why = core.evaluate("Merlin chut", None, 1.2)
+        assert not ok and why == "stop → mode privé" and core.on_hold, why
+
+        # The activator's own stop works (lenient bar on a short phrase).
+        clock.t += 2
+        ok, _ = core.evaluate("Merlin on peut reprendre maintenant", near(fred, 5), 2.5)
+        assert ok
+        clock.t += 2
+        ok, why = core.evaluate("Merlin chut", near(fred, 6), 1.2)
+        assert not ok and why == "stop → mode privé" and core.on_hold, why
+
+        # Default mode: raw_stop holds immediately.
+        core2 = make_core(household, clock)
+        core2.raw_stop()
+        assert core2.on_hold
+        print("ok: activator-only stop (others refused, raw channel deferred)")
+
+
 def test_embedding_separation():
     """Sanity-check the real model wiring (synthetic voices, not real speech)."""
     from voice_guard import compute_embedding
@@ -219,5 +348,7 @@ if __name__ == "__main__":
     test_owner_enrollment_flow()
     test_activator_binding()
     test_family_mode_and_short_wake()
+    test_stop_and_privacy_hold()
+    test_stop_activator_only()
     test_embedding_separation()
     print("all voice_guard tests passed")

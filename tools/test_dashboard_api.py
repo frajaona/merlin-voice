@@ -129,9 +129,74 @@ def test_dismiss():
     print("ok: dismiss endpoint")
 
 
+def test_stop_endpoint():
+    """POST /api/stop: token-gated, scoped to one enrolled person's session."""
+
+    class FakeCore:
+        def __init__(self, activator):
+            self.activator = activator
+            self.held = False
+
+        def enter_hold(self):
+            self.held = True
+
+    class FakeRtvi:
+        def __init__(self):
+            self.interrupted = False
+            self.messages = []
+
+        async def interrupt_bot(self):
+            self.interrupted = True
+
+        async def send_server_message(self, data):
+            self.messages.append(data)
+
+    dashboard_api._token = "secret-test-token"
+    app = FastAPI()
+    app.include_router(dashboard_api.stop_router)
+    client = TestClient(app)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Enrolled people = fake profile files in a TEMP dir (never data/).
+        dashboard_api.VOICES_DIR = Path(tmp)
+        (Path(tmp) / "fred.npz").touch()
+        (Path(tmp) / "camille.npz").touch()
+
+        fred = (FakeCore("fred"), FakeRtvi())
+        camille = (FakeCore("camille"), FakeRtvi())
+        idle = (FakeCore(None), FakeRtvi())
+        for sid, (core, rtvi) in {"s1": fred, "s2": camille, "s3": idle}.items():
+            dashboard_api.register_session(sid, core, rtvi)
+        try:
+            body = {"speaker": "fred"}
+            assert client.post("/api/stop", json=body).status_code == 401
+            assert not fred[0].held  # unauthenticated call must not touch the gate
+            assert client.post("/api/stop", json={}, headers=auth()).status_code == 400
+            assert client.post("/api/stop", json={"speaker": "intrus"}, headers=auth()).status_code == 404
+
+            resp = client.post("/api/stop", json=body, headers=auth())
+            assert resp.status_code == 200
+            assert resp.json() == {"stopped": 1, "speaker": "fred"}
+            assert fred[0].held and fred[1].interrupted
+            assert not camille[0].held and not idle[0].held  # others untouched
+            assert fred[1].messages[0]["event"] == "gate-decision"
+            assert fred[1].messages[0]["accepted"] is False
+
+            # Person enrolled but with no open exchange anywhere -> 0 stopped.
+            (Path(tmp) / "leo.npz").touch()
+            resp = client.post("/api/stop", json={"speaker": "leo"}, headers=auth())
+            assert resp.json() == {"stopped": 0, "speaker": "leo"}
+            assert not camille[0].held and not idle[0].held
+        finally:
+            for sid in ("s1", "s2", "s3"):
+                dashboard_api.unregister_session(sid)
+    print("ok: /api/stop endpoint (scoped per enrolled person)")
+
+
 if __name__ == "__main__":
     test_auth()
     test_workshop_state()
     test_approve()
     test_dismiss()
+    test_stop_endpoint()
     print("all dashboard_api tests passed")

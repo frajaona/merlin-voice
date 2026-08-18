@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from wake_word import WakeState, WakeWordDetector, is_wake_text
+from wake_word import StopState, WakeState, WakeWordDetector, is_stop_text, is_wake_text
 
 
 def synth_batch():
@@ -45,6 +45,25 @@ def test_matcher():
     assert not is_wake_text("C'EST UNE MERVEILLE")
     assert not is_wake_text("")
     print("ok: wake text matcher")
+
+
+def test_stop_matcher():
+    assert is_stop_text("CHUT MERLIN")
+    assert is_stop_text("MERLIN CHUT")
+    assert is_stop_text("MERLIN STOP")
+    assert is_stop_text("MERLIN CHUTE")  # interjection decoded with trailing e
+    assert is_stop_text("MERLIN SHUT")  # real decode of "Merlin, chut !" (sh onset)
+    assert is_stop_text("MERLIN SUT")  # real decode (s onset, t kept)
+    assert is_stop_text("MERLIN CHU")  # real decode (final t dropped)
+    assert is_stop_text("CHUS MERLIN")  # real decode of "Chut Merlin."
+    assert is_stop_text("CHUTMERLIN")  # glued decode
+    assert is_stop_text("MERLINSTOP")
+    assert not is_stop_text("MERLIN QUELLE HEURE EST IL")
+    assert not is_stop_text("C'EST QUOI UN PARACHUTE MERLIN")  # exact word only
+    assert not is_stop_text("MERLIN STOPPE LA MUSIQUE")  # no prefix match
+    assert not is_stop_text("MERLIN J'AI SU LA REPONSE")  # bare "su" is normal French
+    assert not is_stop_text("")
+    print("ok: stop text matcher")
 
 
 def stream_through(detector, state, pcm16, silence_ms=2000):
@@ -90,6 +109,39 @@ def test_detector_streaming():
     assert false == 0, f"false wakes: {false}"
 
 
+def test_detector_stop_streaming():
+    synth = synth_batch()
+    wake = WakeState()
+    stop = StopState()
+    detector = WakeWordDetector(wake, stop)
+    detector.start()
+
+    stop_positives = [
+        "Merlin, chut !",
+        "Chut Merlin.",
+        "Merlin, stop.",
+    ]
+    # Normal wake sentences must fire the wake, never the stop.
+    hits = 0
+    for t in stop_positives:
+        # Each phrase must count as a stop on its own decode window — reset
+        # the after-wake grace so a previous fire can't carry a lone word.
+        # Longer silence tail: a trailing stop word is judged at the decoder
+        # endpoint, which can need >2s of silence (live audio never runs out).
+        wake._last = 0.0
+        hits += stream_through(detector, stop, synth(t), silence_ms=3500)
+    false_stop = stream_through(detector, stop, synth("Merlin, quelle heure est-il ?"), silence_ms=3500)
+    woke = wake.fired_within(60)
+    detector.stop()
+    print(f"ok: streaming stop — recall {hits}/{len(stop_positives)}, "
+          f"false stop {int(false_stop)}, wake still fires: {woke}")
+    assert hits >= 2, f"stop recall too low: {hits}"
+    assert not false_stop, "a plain wake sentence fired the stop"
+    assert woke, "wake stopped firing with the stop channel wired"
+    assert stop.consume(), "no pending interrupt flag after stop fires"
+    assert not stop.consume(), "consume must be one-shot"
+
+
 def test_gatecore_raw_wake():
     """GateCore accepts a mangled transcription when the raw wake fired."""
     import tempfile
@@ -131,6 +183,8 @@ def test_gatecore_raw_wake():
 
 if __name__ == "__main__":
     test_matcher()
+    test_stop_matcher()
     test_gatecore_raw_wake()
     test_detector_streaming()
+    test_detector_stop_streaming()
     print("all wake_word tests passed")
