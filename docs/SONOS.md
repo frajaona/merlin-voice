@@ -92,7 +92,12 @@ son du salon », « groupe la cuisine avec le salon » fonctionnent à la voix.
 > (`POST /api/sonos/refresh`) ; favoris : mémoire 10 min.
 > « depuis le NAS » (service=nas) force la bibliothèque ; sinon NAS puis
 > favoris passent en secours derrière les catalogues. Playlists : alias →
-> favoris Sonos (SQ:n) → playlists iTunes du NAS → Spotify explicite.
+> favoris Sonos (SQ:n) → playlists iTunes du NAS → **playlists perso
+> Music.app** (scrape AppleScript, cache quotidien
+> `data/musicapp-playlists.json` — reconnues, jouables en phase 3 ;
+> consentement Automation du bot en attente, voir DECISIONS 19/08) →
+> **catalogue Apple Music via MusicKit** (token développeur,
+> `data/musickit.json` — voir DECISIONS 19/08) → Spotify explicite.
 > Artistes/albums NAS jouables en conteneurs. Limite connue : le listing
 > des pistes plafonne à ~1000 (recherche par titre = best effort).
 > Validé en vrai (« Joue Adele depuis le NAS », « la playlist Chill »).

@@ -847,3 +847,76 @@ un clic sur le bouton (ou l'expiration du TTL 24 h). Tests :
 échec en succès) + `test_dashboard_api` (`/api/sonos/refresh` : 401 sans
 token, comptes, 502 propre). Vérifié en vrai : endpoint → re-scan complet
 (229/419/1000/55).
+
+## 2026-08-19 — Playlists : Apple Music avant Spotify (MusicKit)
+
+Demande Fred : les playlists doivent passer par Apple Music avant Spotify.
+Contrainte technique : **l'iTunes Search API n'a pas d'entité playlist**
+(vérifié : `entity=playlist` → erreur, `entity=mix` → 0 résultat), et le
+token anonyme du web player n'est plus extractable des bundles JS (vérifié
+— et de toute façon reverse-engineered, contraire au principe du 18/08).
+→ **API MusicKit officielle** : recherche catalogue avec un simple token
+développeur (JWT ES256 signé avec une clé MusicKit du portail Apple
+Developer — pas de login utilisateur pour le catalogue). Signature faite
+avec `cryptography` (déjà une dépendance aiortc), token en cache 12 h.
+
+- Chaîne playlists désormais : alias → favoris Sonos → playlists NAS →
+  **catalogue Apple Music (MusicKit)** → Spotify explicite → refus.
+  « sur Spotify » explicite saute l'étape Apple. Sans
+  `data/musickit.json`, l'étape se désactive proprement (comme Spotify
+  sans credentials).
+- Config attendue (action Fred) : portail développeur → Certificates,
+  Identifiers & Profiles → Keys → nouvelle clé **MusicKit** → télécharger
+  le `.p8`, puis `data/musickit.json` :
+  `{"team_id": "…", "key_id": "…", "private_key": "-----BEGIN PRIVATE KEY-----…"}`.
+- Portée : playlists ÉDITORIALES du catalogue (« Disney Hits ») — les
+  playlists perso Apple Music restent phase 3 (favoris Sonos en attendant).
+- Tests : ordre complet favoris > NAS > Apple > Spotify ; génération du
+  JWT vérifiée cryptographiquement (clé P-256 réelle, signature validée).
+
+## 2026-08-19 — Playlists perso Apple Music : scrape Music.app + cache
+
+Demande Fred : scraper ses playlists via AppleScript et les mettre en cache.
+
+- `musicapp_playlists()` dans `_sonos_common.py` : `osascript` → Music.app
+  (`name of user playlists whose special kind is none`, délimiteur
+  linefeed — les noms peuvent contenir des virgules), **227 playlists**
+  scannées en vrai. Cache disque quotidien `data/musicapp-playlists.json`
+  (même TTL que le NAS), rafraîchi par le même bouton « 🔄 NAS » (le scan
+  Music.app y est best-effort : son échec ne casse pas le re-scan NAS).
+- Rôle : **résolution seulement** — pas de lien de partage public pour une
+  playlist perso, la lecture reste phase 3 (AirPlay). Placée AVANT le
+  catalogue MusicKit dans la chaîne playlists : « ma playlist jogging »
+  reconnue → réponse honnête + conseil favori Sonos, et le catalogue ne
+  peut pas la détourner avec une playlist éditoriale au nom proche.
+  Chaîne finale : alias → favoris → NAS → perso Music.app (réponse) →
+  catalogue MusicKit → Spotify explicite → refus.
+- **TCC en attente (action Fred, à l'écran du Mac)** : le scrape depuis le
+  PROCESS DU BOT échoue en AppleEvent timeout -1712 — le consentement
+  Automation (« Python » → Musique) ne peut pas s'afficher écran
+  éteint/verrouillé (même mécanique que Réseau local le 19/08, mais en
+  timeout au lieu d'Errno 65). En attendant : le cache disque (scanné
+  depuis un shell autorisé) sert le résolveur ; seul le volet Music.app du
+  bouton 🔄 est inopérant. Re-déclencher le prompt : cliquer 🔄 NAS avec
+  l'écran déverrouillé, puis Autoriser.
+- Vérifié bout-en-bout à la voix : « Mets ma playlist Autumn Break 25 » →
+  reconnue, réponse honnête, rien joué. Nota : la première conversation
+  après un restart du bot a ~35 s de latence LLM (la sonde a fermé avant
+  la réponse — tour « dangling », pas un bug du plugin).
+
+## 2026-08-19 — SMAPI/AppLink (sonos.svrooij.io) : évalué et écarté (lead parqué)
+
+Seule voie vers la recherche Apple Music via le compte lié aux enceintes
+(playlists perso incluses, résultats jouables nativement) : le protocole
+SMAPI + auth AppLink documenté par svrooij (implémentable en Python, pas
+de démon Node). Écarté malgré tout : (1) API partenaire
+reverse-engineered — c'est la rotation DeviceLink→AppLink qui a cassé le
+support Apple/Spotify de SoCo, interdit sur le service principal
+(DECISIONS 18/08, réaffirmé 2×) ; (2) la lecture des résultats SMAPI
+exige URI+DIDL en UPnP direct → second chemin de contrôle (contraire au
+plan de contrôle unique) ; (3) le manque est déjà couvert (favoris Sonos
++ scrape Music.app + phase 3 AirPlay + MusicKit catalogue).
+**Déclencheur de réouverture** : le flux « étoiler en favori » s'avère
+pénible au quotidien ET l'AirPlay de la phase 3 trop dépendant du Mac —
+alors SMAPI, cantonné à la recherche de playlists perso, favoris en
+secours permanent.

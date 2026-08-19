@@ -18,6 +18,7 @@ spec = importlib.util.spec_from_file_location(
 )
 sm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sm)
+REAL_MUSICKIT_TOKEN = sm._musickit_token  # run() le remplace par un fake
 
 SONOS_IDS = ["media_player.salon", "media_player.cuisine"]
 
@@ -61,7 +62,15 @@ class FakeHA:
         raise AssertionError(f"unexpected path {path}")
 
 
-def fake_http(itunes_albums=None, itunes_songs=None, spotify=None):
+MUSICKIT_SEARCH = {
+    "results": {"playlists": {"data": [
+        {"attributes": {"name": "Disney Hits",
+                        "url": "https://music.apple.com/fr/playlist/disney-hits/pl.123"}},
+    ]}},
+}
+
+
+def fake_http(itunes_albums=None, itunes_songs=None, spotify=None, musickit=None):
     def dispatch(url, data=None, headers=None):
         if url.startswith(sm._ITUNES):
             if "entity=album" in url:
@@ -71,6 +80,8 @@ def fake_http(itunes_albums=None, itunes_songs=None, spotify=None):
             return {"access_token": "tok", "expires_in": 3600}
         if url.startswith(sm._SPOTIFY_API + "/search"):
             return spotify if spotify is not None else SPOTIFY_SEARCH
+        if url.startswith(sm._MUSICKIT_SEARCH):
+            return musickit if musickit is not None else MUSICKIT_SEARCH
         raise AssertionError(f"unexpected url {url}")
     return dispatch
 
@@ -127,7 +138,8 @@ def fake_ws(tree):
     return browse
 
 
-def run(fake_ha, http=None, aliases=None, default_room=None, ws=None, **arguments):
+def run(fake_ha, http=None, aliases=None, default_room=None, ws=None,
+        musickit_on=False, spotify_on=False, **arguments):
     sm.common._entity_cache = None
     sm._spotify_token_cache = None
     sm._browse_cache = {}
@@ -136,6 +148,12 @@ def run(fake_ha, http=None, aliases=None, default_room=None, ws=None, **argument
     sm.common.ha_request = fake_ha.request
     sm.common.ws_browse = ws or fake_ws({})
     sm._http_json = http or fake_http()
+    sm._musickit_token_cache = None
+    # Désactivé par défaut, comme en prod sans data/musickit.json.
+    sm._musickit_creds = (lambda: ("team", "key", "pem")) if musickit_on else (lambda: None)
+    sm._musickit_token = lambda: "fake-dev-token"
+    sm.common._musicapp_mem = None
+    sm.common.musicapp_playlists = lambda force=False: []
     tmp = Path(tempfile.mkdtemp())
     sm.ALIAS_PATH = tmp / "sonos-aliases.json"
     if aliases is not None:
@@ -143,6 +161,9 @@ def run(fake_ha, http=None, aliases=None, default_room=None, ws=None, **argument
     os.environ.pop("MERLIN_SONOS_DEFAULT_ROOM", None)
     os.environ.pop("MERLIN_SPOTIFY_ID", None)
     os.environ.pop("MERLIN_SPOTIFY_SECRET", None)
+    if spotify_on:
+        os.environ["MERLIN_SPOTIFY_ID"] = "id"
+        os.environ["MERLIN_SPOTIFY_SECRET"] = "secret"
     if default_room:
         os.environ["MERLIN_SONOS_DEFAULT_ROOM"] = default_room
     params = FakeParams(**arguments)
@@ -287,6 +308,75 @@ def test_nas_fallback_after_catalog():
     print("ok: NAS en secours quand le catalogue ne matche pas")
 
 
+def test_playlist_apple_before_spotify():
+    # MusicKit configuré : le catalogue Apple Music sert les playlists
+    # inconnues des favoris/NAS — AVANT Spotify (demande Fred 19/08).
+    ha = FakeHA()
+    r = run(ha, musickit_on=True, recherche="disney hits", type="playlist", piece="salon")
+    assert r["service"] == "Apple Music" and "Disney Hits" in r["ok"], r
+    assert play_call(ha)["media_content_id"].startswith("https://music.apple.com/fr/playlist/")
+    # « sur Spotify » explicite : Apple sauté même si MusicKit est configuré.
+    ha = FakeHA()
+    r = run(ha, musickit_on=True, spotify_on=True,
+            recherche="comptines pour enfants", type="playlist",
+            piece="salon", service="spotify")
+    assert r["service"] == "Spotify", r
+    assert play_call(ha)["media_content_id"] == "https://open.spotify.com/playlist/KIDS"
+    # Favoris Sonos toujours prioritaires sur le catalogue Apple.
+    ha = FakeHA()
+    r = run(ha, musickit_on=True, ws=fake_ws(NAS_TREE), recherche="chill",
+            type="playlist", piece="salon")
+    assert r["service"] == "favoris Sonos", r
+    print("ok: playlists — favoris > NAS > Apple Music (MusicKit) > Spotify explicite")
+
+
+def test_playlist_perso_musicapp():
+    # Playlist perso Music.app reconnue : réponse honnête, et le catalogue
+    # MusicKit ne peut PAS la détourner (même configuré).
+    ha = FakeHA()
+    r = run(ha, musickit_on=True, recherche="ma playlist jogging",
+            type="playlist", piece="salon")
+    sm.common.musicapp_playlists = lambda force=False: ["Jogging", "Soirée posée"]
+    params = FakeParams(recherche="ma playlist jogging", type="playlist", piece="salon")
+    asyncio.run(sm.handler(params))
+    r = params.results[0]
+    assert "error" in r and "Jogging" in r["error"] and "personnelle" in r["error"], r
+    assert play_call(ha) is None, "must not play anything for a personal playlist"
+    # Music.app indisponible : la chaîne continue vers le catalogue.
+    def boom(force=False):
+        raise RuntimeError("osascript: -1743")
+    sm.common.musicapp_playlists = boom
+    params = FakeParams(recherche="disney hits", type="playlist", piece="salon")
+    asyncio.run(sm.handler(params))
+    r = params.results[0]
+    assert r.get("service") == "Apple Music", r
+    print("ok: playlists perso Music.app reconnues, prioritaires sur le catalogue")
+
+
+def test_musickit_token_generation():
+    import base64
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()).decode()
+    sm._musickit_creds = lambda: ("TEAMID", "KEYID", pem)
+    sm._musickit_token_cache = None
+    tok = REAL_MUSICKIT_TOKEN()
+    h, p, s = tok.split(".")
+    pad = lambda x: x + "=" * (-len(x) % 4)
+    header = json.loads(base64.urlsafe_b64decode(pad(h)))
+    payload = json.loads(base64.urlsafe_b64decode(pad(p)))
+    assert header == {"alg": "ES256", "kid": "KEYID"}, header
+    assert payload["iss"] == "TEAMID" and payload["exp"] - payload["iat"] == 12 * 3600
+    sig = base64.urlsafe_b64decode(pad(s))
+    der = utils.encode_dss_signature(
+        int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big"))
+    key.public_key().verify(der, f"{h}.{p}".encode(), ec.ECDSA(hashes.SHA256()))
+    print("ok: token développeur MusicKit (ES256) signé et vérifiable")
+
+
 def test_spotify_explicit():
     ha = FakeHA()
     os.environ["MERLIN_SPOTIFY_ID"] = "id"
@@ -338,6 +428,9 @@ if __name__ == "__main__":
     test_playlist_via_favorites_and_nas()
     test_nas_daily_cache()
     test_nas_fallback_after_catalog()
+    test_playlist_apple_before_spotify()
+    test_playlist_perso_musicapp()
+    test_musickit_token_generation()
     test_spotify_explicit()
     test_room_selection()
     test_ha_down_single_result()

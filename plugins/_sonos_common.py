@@ -267,6 +267,56 @@ def nas_browse(entity_id: str, content_type: str, content_id: str,
     return items
 
 
+# -- playlists personnelles Apple Music (Music.app, AppleScript) ---------------
+# La bibliothèque iCloud est synchronisée dans Music.app sur ce Mac : on
+# scrape les NOMS des playlists perso (résolution seulement — la lecture
+# reste phase 3, pas de lien de partage public). Même cache quotidien que
+# la bibliothèque NAS, rafraîchi par le même bouton « 🔄 NAS ».
+
+MUSICAPP_CACHE_PATH = REPO / "data" / "musicapp-playlists.json"
+_musicapp_mem: dict | None = None
+
+_MUSICAPP_SCRIPT = """\
+with timeout of 30 seconds
+  tell application "Music" to set pl to name of user playlists whose special kind is none
+end timeout
+set AppleScript's text item delimiters to linefeed
+pl as text"""
+
+
+def _osascript(script: str, timeout: int = 40) -> str:
+    import subprocess
+
+    r = subprocess.run(["osascript", "-e", script],
+                       capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError(f"osascript: {r.stderr.strip() or f'code {r.returncode}'}")
+    return r.stdout.rstrip("\n")
+
+
+def musicapp_playlists(force: bool = False) -> list[str]:
+    """Noms des playlists perso Apple Music (cache disque quotidien)."""
+    global _musicapp_mem
+    if _musicapp_mem is None:
+        try:
+            _musicapp_mem = json.loads(MUSICAPP_CACHE_PATH.read_text())
+        except (OSError, json.JSONDecodeError):
+            _musicapp_mem = {}
+    if not force and _musicapp_mem.get("items") is not None \
+            and time.time() - _musicapp_mem.get("at", 0) < LIBRARY_TTL:
+        return _musicapp_mem["items"]
+    out = _osascript(_MUSICAPP_SCRIPT)
+    names = sorted({n.strip() for n in out.split("\n") if n.strip()})
+    _musicapp_mem = {"at": time.time(), "items": names}
+    try:
+        MUSICAPP_CACHE_PATH.write_text(
+            json.dumps(_musicapp_mem, ensure_ascii=False))
+    except OSError as e:
+        logger.warning(f"sonos: cache playlists Music.app non écrit ({e})")
+    logger.info(f"sonos: {len(names)} playlists perso Music.app scannées")
+    return names
+
+
 def refresh_library(entity_id: str | None = None) -> dict:
     """Re-scanne les 4 catégories de l'index NAS. Renvoie les comptes."""
     if entity_id is None:
@@ -277,5 +327,10 @@ def refresh_library(entity_id: str | None = None) -> dict:
     counts = {}
     for label, (ct, ci) in NAS_CATEGORIES.items():
         counts[label + "s"] = len(nas_browse(entity_id, ct, ci, force=True))
-    logger.info(f"sonos: bibliothèque NAS re-scannée ({counts})")
+    # Best-effort : Music.app peut être indisponible sans casser le scan NAS.
+    try:
+        counts["playlists perso"] = len(musicapp_playlists(force=True))
+    except Exception as e:
+        logger.warning(f"sonos: scrape Music.app échoué ({e})")
+    logger.info(f"sonos: bibliothèque re-scannée ({counts})")
     return counts

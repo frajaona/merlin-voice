@@ -404,8 +404,8 @@
           return;
         }
         const c = (await resp.json()).refreshed;
-        setStatus(`Bibliothèque NAS re-scannée : ${c.artistes} artistes, `
-          + `${c.albums} albums, ${c.titres} titres, ${c.playlists} playlists`);
+        const parts = Object.entries(c).map(([k, v]) => `${v} ${k}`);
+        setStatus(`Bibliothèque re-scannée : ${parts.join(', ')}`);
       } catch {
         setStatus('Scan NAS échoué (réseau)');
       } finally {

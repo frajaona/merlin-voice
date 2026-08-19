@@ -28,9 +28,12 @@ Résolveurs, dans l'ordre :
 
 Principe du gate : correspondance douteuse (score < 0.60) → on ne joue PAS,
 on renvoie les candidats. Playlists : alias → favoris Sonos → playlists
-NAS → Spotify explicite — sinon refus (on n'improvise pas sur les
-playlists publiques). Les playlists personnelles Apple Music restent
-phase 3 (AirPlay Music.app).
+NAS → **playlists perso Music.app** (noms scrapés en AppleScript, cache
+quotidien — reconnues mais jouables seulement en phase 3 : réponse honnête
++ conseil favori, et le catalogue ne peut pas les détourner) → **catalogue
+Apple Music via MusicKit** (service principal, avant Spotify — voir
+data/musickit.json plus bas) → Spotify explicite — sinon refus (on
+n'improvise pas sur les playlists publiques).
 
 Pièce cible : `piece`, sinon MERLIN_SONOS_DEFAULT_ROOM, sinon l'unique
 enceinte du foyer — sinon on demande.
@@ -176,6 +179,90 @@ def _resolve_apple(recherche: str, type_: str):
                            f"{r.get('trackName', '')} {r.get('artistName', '')}")
                 desc = f"{r.get('trackName')} de {r.get('artistName')}"
                 candidates.append((s, _link(r.get("trackViewUrl")), desc))
+    return _best(candidates)
+
+
+# -- MusicKit (playlists du catalogue Apple Music) ----------------------------
+# L'iTunes Search API n'a PAS d'entité playlist — la recherche de playlists
+# Apple Music passe par l'API officielle MusicKit, avec un simple token
+# développeur (JWT ES256 signé avec une clé MusicKit du portail développeur ;
+# pas de login utilisateur pour le catalogue). Config :
+# data/musickit.json {"team_id": …, "key_id": …, "private_key": "-----BEGIN…"}
+# — absent → résolveur désactivé (favoris/NAS/Spotify continuent).
+_MUSICKIT_SEARCH = "https://api.music.apple.com/v1/catalog/fr/search"
+_musickit_token_cache: tuple[float, str] | None = None
+
+
+def _musickit_creds():
+    path = common.REPO / "data" / "musickit.json"
+    if path.exists():
+        try:
+            d = json.loads(path.read_text())
+            return d["team_id"], d["key_id"], d["private_key"]
+        except (json.JSONDecodeError, KeyError, OSError) as e:
+            logger.warning(f"sonos_musique: musickit.json illisible ({e})")
+    return None
+
+
+def _musickit_token() -> str:
+    """JWT développeur ES256 (cryptography est déjà une dépendance aiortc)."""
+    global _musickit_token_cache
+    if _musickit_token_cache and time.monotonic() < _musickit_token_cache[0]:
+        return _musickit_token_cache[1]
+    creds = _musickit_creds()
+    if not creds:
+        raise RuntimeError("MusicKit non configuré (data/musickit.json)")
+    team_id, key_id, pem = creds
+    import base64
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
+
+    def b64(d: bytes) -> bytes:
+        return base64.urlsafe_b64encode(d).rstrip(b"=")
+
+    key = serialization.load_pem_private_key(pem.encode(), password=None)
+    now = int(time.time())
+    signing = (b64(json.dumps({"alg": "ES256", "kid": key_id}).encode())
+               + b"." + b64(json.dumps({"iss": team_id, "iat": now,
+                                        "exp": now + 12 * 3600}).encode()))
+    # JWT veut la signature brute r||s (64 octets), pas le DER de cryptography.
+    r, s = utils.decode_dss_signature(key.sign(signing, ec.ECDSA(hashes.SHA256())))
+    token = (signing + b"." + b64(r.to_bytes(32, "big") + s.to_bytes(32, "big"))).decode()
+    _musickit_token_cache = (time.monotonic() + 12 * 3600 - 120, token)
+    return token
+
+
+def _resolve_musicapp(recherche: str) -> str | None:
+    """Nom de la playlist perso Apple Music (Music.app) qui matche, sinon
+    None. Résolution seulement — pas jouable avant la phase 3 — mais elle
+    doit passer AVANT le catalogue MusicKit : « ma playlist jogging » ne
+    doit pas être détournée par une playlist éditoriale au nom proche."""
+    try:
+        names = common.musicapp_playlists()
+    except Exception as e:
+        logger.warning(f"sonos_musique: playlists Music.app indisponibles ({e})")
+        return None
+    best, best_score = None, 0.0
+    for n in names:
+        s = _score(recherche, n)
+        if s > best_score:
+            best, best_score = n, s
+    return best if best_score >= MATCH_MIN else None
+
+
+def _resolve_apple_playlist(recherche: str):
+    """Playlists du catalogue Apple Music (éditoriales) via MusicKit."""
+    params = {"term": recherche, "types": "playlists", "limit": 8}
+    data = _http_json(
+        f"{_MUSICKIT_SEARCH}?{urllib.parse.urlencode(params)}",
+        headers={"Authorization": f"Bearer {_musickit_token()}"},
+    )
+    candidates = []
+    playlists = ((data.get("results") or {}).get("playlists") or {}).get("data", [])
+    for p in playlists:
+        a = p.get("attributes", {})
+        s = _score(recherche, a.get("name", ""))
+        candidates.append((s, _link(a.get("url")), f"la playlist {a.get('name')}"))
     return _best(candidates)
 
 
@@ -378,15 +465,29 @@ def _run(recherche: str, type_: str, piece: str, service: str) -> dict:
         _play(eid, ref)
         return {"ok": f"je lance {desc} dans {nom}", "service": "bibliothèque NAS"}
 
-    # 3. Playlists : favoris Sonos → playlists NAS → Spotify explicite —
-    #    sinon refus (on n'improvise pas sur les playlists publiques).
+    # 3. Playlists : favoris Sonos → playlists NAS → catalogue Apple Music
+    #    (MusicKit, service principal — AVANT Spotify, demande Fred 19/08) →
+    #    Spotify explicite — sinon refus (on n'improvise pas).
     if type_ == "playlist":
+        source = "favoris Sonos"
         ref, desc, _ = _resolve_favoris(recherche, eid)
         if ref is None:
             ref, desc, _ = _resolve_nas(recherche, "playlist", eid)
+            source = "bibliothèque NAS"
+        if ref is None and service != "spotify":
+            perso = _resolve_musicapp(recherche)
+            if perso:
+                return {"error": (
+                    f"« {perso} » est une playlist personnelle Apple Music — "
+                    "pas encore jouable sur Sonos (phase 3) ; ajoute-la aux "
+                    "favoris Sonos pour que je puisse la lancer"
+                )}
+        if ref is None and service != "spotify" and _musickit_creds():
+            ref, desc, _ = _resolve_apple_playlist(recherche)
+            source = "Apple Music"
         if ref is None and service == "spotify":
-            s_ref, s_desc, _ = _resolve_spotify(recherche, "playlist")
-            ref, desc = s_ref, s_desc
+            ref, desc, _ = _resolve_spotify(recherche, "playlist")
+            source = "Spotify"
         if ref is None:
             return {"error": (
                 f"je ne connais pas la playlist '{recherche}' — ajoute-la "
@@ -394,7 +495,7 @@ def _run(recherche: str, type_: str, piece: str, service: str) -> dict:
                 "les playlists personnelles Apple Music arrivent en phase 3"
             )}
         _play(eid, ref)
-        return {"ok": f"je lance {desc} dans {nom}"}
+        return {"ok": f"je lance {desc} dans {nom}", "service": source}
 
     # 4. Catalogues : Apple Music d'abord (service principal), Spotify en
     #    explicite ou en secours si configuré — puis NAS et favoris.
