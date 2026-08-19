@@ -777,3 +777,73 @@ Fred a validé les deux pistes (a) et (b) de l'incident du matin :
   Cuisine, refus de playlist inconnue, pause. Nuance observée : sur le
   refus, le LLM propose l'atelier au lieu de relayer le conseil alias —
   acceptable (le refus est le comportement critique), à surveiller.
+
+## 2026-08-19 — Sonos phase 2b : NAS + favoris via le websocket HA
+
+- **Websocket HA plutôt que SoCo** pour parcourir l'index Sonos : garde le
+  plan de contrôle unique (décision du 18/08 : pas deux chemins vers les
+  mêmes enceintes). `ws_browse` dans `_sonos_common.py` (aiohttp, déjà une
+  dépendance pipecat ; connexion éphémère, `asyncio.run` sûr car appelé
+  depuis le thread `to_thread`). La lecture reste `play_media` REST — les
+  ids du browse (`A:ALBUMARTIST/...`, `A:ALBUM/...`, `S://...`, `SQ:n`)
+  passent tels quels, vérifié en vrai.
+- **Mesuré sur le vrai NAS** : 229 artistes, 419 albums, 55 playlists
+  iTunes (doublons `iTunes Library.xml`/`iTunes Music Library.xml` —
+  dédupliqués par titre normalisé), très loin de la limite Sonos de 65 k.
+  **Le listing des pistes plafonne à 1000 éléments** → recherche par titre
+  NAS = best effort, chargée seulement sur demande explicite (type titre).
+- **Conteneurs jouables** : artistes et albums du NAS ont `can_play=True` —
+  « joue Adele depuis le NAS » joue TOUT l'artiste (mieux que le compromis
+  « meilleur album » des catalogues). Favoris Sonos = `favorite_item_id`
+  (`SQ:n` pour les playlists Sonos) — le « filet de sécurité » du plan est
+  livré, et couvre les playlists perso en attendant la phase 3.
+- **Ordre playlists** : alias → favoris Sonos → playlists NAS → Spotify
+  explicite → refus. Ordre catalogue (album/artiste/titre) : Apple Music →
+  Spotify (explicite/configuré) → NAS → favoris. `service=nas` (« depuis
+  le NAS », « la bibliothèque ») court-circuite tout sauf les alias.
+- **Leçon de rechargement** : les plugins sont rescannés à chaque
+  conversation, MAIS `plugins/_sonos_common.py` est un import régulier
+  gardé dans `sys.modules` du process bot — **toute modification d'un
+  module partagé `_*.py` exige un redémarrage du bot** (constaté en vrai :
+  `no attribute 'ws_browse'` après édition sans restart).
+- Cache browse 10 min (`_browse_cache`) : la bibliothèque bouge rarement ;
+  premier appel ~1–3 s (couvert par le filler « Je lance ça »), suivants
+  instantanés. Vérifié bout-en-bout par la voix : artiste NAS, playlist
+  favorite ; suites test_sonos_musique (11 groupes) et test_sonos_controle
+  vertes.
+
+## 2026-08-19 — Cache bibliothèque NAS : quotidien, sur disque (demande Fred)
+
+- Le cache mémoire 10 min de la 2b devient **un cache disque quotidien**
+  (`data/sonos-library.json`, TTL `MERLIN_SONOS_LIBRARY_TTL` = 86400) : la
+  bibliothèque ne bouge presque jamais, et le disque survit aux
+  redémarrages du bot (le premier « depuis le NAS » du jour est le seul à
+  payer le scan ; catégories chargées à la demande).
+- **Filet anti-péremption** : une recherche NAS infructueuse avec un cache
+  de plus d'UNE heure déclenche un re-scan unique puis un re-essai — un
+  album rippé dans la journée reste trouvable sans attendre demain ; les
+  requêtes fantaisistes ne re-scannent pas en boucle (rate limit 1 h).
+- Les **favoris** gardent le cache mémoire court (10 min) : on étoile
+  souvent des nouveautés dans l'app Sonos.
+- Testé : persistance à travers un redémarrage simulé (websocket mort,
+  résolution depuis le disque), re-scan sur cache périmé, rate limit.
+  Vérifié en vrai (« Joue Patty Griffin depuis le NAS », cache écrit :
+  229 artistes).
+
+## 2026-08-19 — Re-scan NAS : manuel uniquement (bouton dashboard)
+
+Fred a retiré le filet « re-scan sur échec » du cache quotidien : **aucun
+re-scan automatique** — comportement plus prévisible, pas de latence
+surprise sur une demande ratée. À la place : **bouton « 🔄 NAS »** dans
+l'en-tête du panneau Outils du dashboard → `POST /api/sonos/refresh`
+(Bearer, comme le reste) → `refresh_library()` re-scanne les 4 catégories
+et réécrit `data/sonos-library.json`, réponse = comptes par catégorie
+(affichés dans la barre de statut). Le cache et `refresh_library` ont
+déménagé de sonos_musique vers `plugins/_sonos_common.py` pour être
+joignables depuis `dashboard_api` sans passer par le chargeur de plugins.
+Conséquence assumée : un album rippé aujourd'hui n'est trouvable qu'après
+un clic sur le bouton (ou l'expiration du TTL 24 h). Tests :
+`test_sonos_musique` (pas de re-scan sur échec, le bouton transforme un
+échec en succès) + `test_dashboard_api` (`/api/sonos/refresh` : 401 sans
+token, comptes, 502 propre). Vérifié en vrai : endpoint → re-scan complet
+(229/419/1000/55).

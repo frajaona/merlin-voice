@@ -75,6 +75,13 @@
       font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em;
       text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
     }
+    section h2 button {
+      float: right; background: transparent; border: 1px solid var(--border);
+      color: var(--muted); border-radius: 12px; padding: 1px 10px;
+      font-size: 0.68rem; cursor: pointer; text-transform: none;
+      letter-spacing: normal;
+    }
+    section h2 button:disabled { opacity: 0.5; cursor: wait; }
 
     /* ---- voice panel ---- */
     #panel-voice { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 22px 14px; }
@@ -298,7 +305,7 @@
     </section>
 
     <section id="panel-tools">
-      <h2>Outils</h2>
+      <h2>Outils <button id="btn-nas" title="Re-scanner la bibliothèque NAS (index Sonos, cache quotidien)">🔄 NAS</button></h2>
       <div id="tools" data-empty="Aucun appel d'outil pour l'instant."></div>
     </section>
 
@@ -375,6 +382,35 @@
         setStatus(r.stopped
           ? `Mode privé pour ${r.speaker} — « Merlin, tu es là ? » pour reprendre`
           : `Aucune session active pour ${r.speaker}`);
+      }
+    });
+
+    // ---- NAS library refresh -------------------------------------------------
+    // Manual only (no auto-rescan on lookup miss, by design): re-scans the
+    // Sonos NAS index into the daily disk cache (data/sonos-library.json).
+    $('btn-nas').addEventListener('click', async () => {
+      const btn = $('btn-nas');
+      btn.disabled = true;
+      const label = btn.textContent;
+      btn.textContent = 'scan…';
+      try {
+        const resp = await fetch('/api/sonos/refresh', {
+          method: 'POST', headers: authHeaders(),
+        });
+        if (resp.status === 401) { showTokenPrompt('Token requis.'); return; }
+        if (!resp.ok) {
+          const detail = (await resp.json().catch(() => ({}))).detail;
+          setStatus(`Scan NAS échoué : ${detail || resp.status}`);
+          return;
+        }
+        const c = (await resp.json()).refreshed;
+        setStatus(`Bibliothèque NAS re-scannée : ${c.artistes} artistes, `
+          + `${c.albums} albums, ${c.titres} titres, ${c.playlists} playlists`);
+      } catch {
+        setStatus('Scan NAS échoué (réseau)');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = label;
       }
     });
 

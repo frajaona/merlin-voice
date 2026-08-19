@@ -193,10 +193,35 @@ def test_stop_endpoint():
     print("ok: /api/stop endpoint (scoped per enrolled person)")
 
 
+def test_sonos_refresh():
+    with tempfile.TemporaryDirectory() as tmp:
+        client = make_client(Path(tmp), lambda slug: Path(f"plugins/{slug}.py"))
+        client.app.include_router(dashboard_api.stop_router)
+        orig = dashboard_api._sonos_refresh
+        try:
+            dashboard_api._sonos_refresh = lambda: {
+                "artistes": 229, "albums": 419, "titres": 1000, "playlists": 55}
+            assert client.post("/api/sonos/refresh").status_code == 401
+            resp = client.post("/api/sonos/refresh", headers=auth())
+            assert resp.status_code == 200
+            assert resp.json() == {"refreshed": {
+                "artistes": 229, "albums": 419, "titres": 1000, "playlists": 55}}
+
+            def boom():
+                raise RuntimeError("aucune enceinte Sonos vue par Home Assistant")
+            dashboard_api._sonos_refresh = boom
+            resp = client.post("/api/sonos/refresh", headers=auth())
+            assert resp.status_code == 502 and "enceinte" in resp.json()["detail"]
+        finally:
+            dashboard_api._sonos_refresh = orig
+    print("ok: /api/sonos/refresh (token, comptes, 502 propre)")
+
+
 if __name__ == "__main__":
     test_auth()
     test_workshop_state()
     test_approve()
     test_dismiss()
     test_stop_endpoint()
+    test_sonos_refresh()
     print("all dashboard_api tests passed")

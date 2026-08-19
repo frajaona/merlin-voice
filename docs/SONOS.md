@@ -84,6 +84,18 @@ son du salon », « groupe la cuisine avec le salon » fonctionnent à la voix.
 > improviser) ; « joue <artiste> » = son album le plus en vue, annoncé.
 > Alias : `data/sonos-aliases.json`, format `{"nom parlé": "https://…"}`.
 > Validé bout-en-bout en vrai (Discovery dans la Cuisine par la voix).
+>
+> **Phase 2b faite le même jour** : bibliothèque NAS **et favoris Sonos**
+> via le websocket HA (`_sonos_common.ws_browse`). Cache bibliothèque :
+> **disque, quotidien** (`data/sonos-library.json`, `MERLIN_SONOS_LIBRARY_TTL`),
+> re-scan **manuel uniquement** — bouton « 🔄 NAS » du dashboard
+> (`POST /api/sonos/refresh`) ; favoris : mémoire 10 min.
+> « depuis le NAS » (service=nas) force la bibliothèque ; sinon NAS puis
+> favoris passent en secours derrière les catalogues. Playlists : alias →
+> favoris Sonos (SQ:n) → playlists iTunes du NAS → Spotify explicite.
+> Artistes/albums NAS jouables en conteneurs. Limite connue : le listing
+> des pistes plafonne à ~1000 (recherche par titre = best effort).
+> Validé en vrai (« Joue Adele depuis le NAS », « la playlist Chill »).
 
 La valeur principale : « joue X dans la pièce Y ».
 

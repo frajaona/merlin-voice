@@ -12,6 +12,7 @@ Env / fichiers :
 - MERLIN_SONOS_DEFAULT_ROOM : pièce par défaut
 """
 
+import asyncio
 import difflib
 import json
 import os
@@ -174,3 +175,107 @@ def call_service(service: str, entity_id: str, extra: dict | None = None):
 
 def vol_pct(state: dict) -> int:
     return round((state.get("attributes", {}).get("volume_level") or 0.0) * 100)
+
+
+def ws_browse(entity_id: str, media_content_type: str | None = None,
+              media_content_id: str | None = None) -> list[dict]:
+    """Enfants d'un nœud media (bibliothèque Sonos, favoris…).
+
+    Le REST de HA ne sait pas parcourir les médias — c'est du websocket
+    uniquement (`media_player/browse_media`). Appelé depuis les handlers
+    via asyncio.to_thread : le thread n'a pas de boucle, asyncio.run est
+    sûr ici. Connexion éphémère par appel — les résultats sont mis en
+    cache côté appelant (la bibliothèque bouge rarement)."""
+    return asyncio.run(_ws_browse(entity_id, media_content_type, media_content_id))
+
+
+async def _ws_browse(entity_id, content_type, content_id) -> list[dict]:
+    import aiohttp
+
+    ws_url = ha_url().replace("http", "ws", 1) + "/api/websocket"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(ws_url) as ws:
+                await ws.receive_json(timeout=TIMEOUT)  # auth_required
+                await ws.send_json({"type": "auth", "access_token": get_token()})
+                msg = await ws.receive_json(timeout=TIMEOUT)
+                if msg.get("type") != "auth_ok":
+                    raise RuntimeError("HA websocket : auth refusée")
+                payload = {"id": 1, "type": "media_player/browse_media",
+                           "entity_id": entity_id}
+                if content_type is not None:
+                    payload["media_content_type"] = content_type
+                if content_id is not None:
+                    payload["media_content_id"] = content_id
+                await ws.send_json(payload)
+                # Un gros listing (pistes) peut prendre quelques secondes.
+                msg = await ws.receive_json(timeout=20)
+                if not msg.get("success"):
+                    err = (msg.get("error") or {}).get("message", "échec")
+                    raise RuntimeError(f"HA browse: {err}")
+                return (msg.get("result") or {}).get("children") or []
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        raise RuntimeError(f"Home Assistant websocket injoignable: {e}") from e
+
+
+# -- bibliothèque NAS (index Sonos) : cache disque quotidien -------------------
+# La bibliothèque ne bouge presque jamais (demande Fred 19/08) : cache disque
+# TTL 24 h, survit aux redémarrages. Rafraîchissement MANUEL : bouton
+# « 🔄 NAS » du dashboard → POST /api/sonos/refresh → refresh_library().
+# Vit ici (et pas dans sonos_musique) pour être joignable depuis
+# dashboard_api sans passer par le chargeur de plugins.
+
+LIBRARY_CACHE_PATH = REPO / "data" / "sonos-library.json"
+LIBRARY_TTL = float(os.environ.get("MERLIN_SONOS_LIBRARY_TTL", "86400"))
+NAS_CATEGORIES = {
+    "artiste": ("artist", "A:ALBUMARTIST"),
+    "album": ("album", "A:ALBUM"),
+    "titre": ("track", "A:TRACKS"),
+    "playlist": ("playlist", "A:PLAYLISTS"),
+}
+_library_mem: dict | None = None  # miroir mémoire du fichier
+
+
+def library_load() -> dict:
+    global _library_mem
+    if _library_mem is None:
+        try:
+            _library_mem = json.loads(LIBRARY_CACHE_PATH.read_text())
+        except (OSError, json.JSONDecodeError):
+            _library_mem = {}
+        _library_mem.setdefault("categories", {})
+    return _library_mem
+
+
+def nas_browse(entity_id: str, content_type: str, content_id: str,
+               force: bool = False) -> list[dict]:
+    lib = library_load()
+    cat = lib["categories"].get(content_id)
+    if not force and cat and time.time() - cat.get("at", 0) < LIBRARY_TTL:
+        return cat["items"]
+    items = [
+        {"title": c.get("title", ""),
+         "media_content_type": c.get("media_content_type"),
+         "media_content_id": c.get("media_content_id")}
+        for c in ws_browse(entity_id, content_type, content_id)
+    ]
+    lib["categories"][content_id] = {"at": time.time(), "items": items}
+    try:
+        LIBRARY_CACHE_PATH.write_text(json.dumps(lib, ensure_ascii=False))
+    except OSError as e:
+        logger.warning(f"sonos: cache bibliothèque non écrit ({e})")
+    return items
+
+
+def refresh_library(entity_id: str | None = None) -> dict:
+    """Re-scanne les 4 catégories de l'index NAS. Renvoie les comptes."""
+    if entity_id is None:
+        sts = states()
+        if not sts:
+            raise RuntimeError("aucune enceinte Sonos vue par Home Assistant")
+        entity_id = sorted(sts)[0]
+    counts = {}
+    for label, (ct, ci) in NAS_CATEGORIES.items():
+        counts[label + "s"] = len(nas_browse(entity_id, ct, ci, force=True))
+    logger.info(f"sonos: bibliothèque NAS re-scannée ({counts})")
+    return counts

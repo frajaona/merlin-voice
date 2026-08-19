@@ -92,6 +92,24 @@ def _enrolled_names() -> set:
 stop_router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
 
 
+def _sonos_refresh() -> dict:
+    """Re-scanne l'index NAS (cache quotidien de plugins/_sonos_common)."""
+    from plugins import _sonos_common as sonos
+
+    return sonos.refresh_library()
+
+
+@stop_router.post("/sonos/refresh")
+async def sonos_refresh():
+    """Bouton « 🔄 NAS » du dashboard : re-scan manuel de la bibliothèque
+    (décision 19/08 : pas de re-scan automatique sur échec de recherche)."""
+    try:
+        counts = await asyncio.to_thread(_sonos_refresh)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"refreshed": counts}
+
+
 @stop_router.post("/stop")
 async def stop_person(body: dict):
     speaker = str(body.get("speaker", "")).strip()

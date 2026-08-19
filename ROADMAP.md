@@ -190,8 +190,20 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   refactoré dessus). Tests : `tools/test_sonos_musique.py` (8 groupes,
   faux HA/iTunes/Spotify). Vérifié en vrai bout-en-bout : « Joue l'album
   Discovery de Daft Punk dans la cuisine » → lecture ; playlist inconnue →
-  refus ; pause. **Reporté en 2b : bibliothèque NAS** (browse Sonos
-  impossible en REST HA — passer par le websocket HA ou SoCo).
+  refus ; pause. **Phase 2b faite le même jour** : bibliothèque NAS +
+  favoris Sonos via le websocket HA (`ws_browse` dans `_sonos_common.py` ;
+  bibliothèque en cache disque quotidien `data/sonos-library.json`,
+  re-scan manuel via le bouton « 🔄 NAS » du dashboard →
+  `POST /api/sonos/refresh` ; favoris en mémoire 10 min) — « depuis le
+  NAS » force la bibliothèque
+  (conteneurs
+  artiste/album jouables : « Joue Adele depuis le NAS » joue tout
+  l'artiste), NAS et favoris en secours derrière les catalogues, playlists
+  = alias → favoris (SQ:n) → playlists iTunes du NAS → Spotify explicite.
+  Limite : listing des pistes plafonné ~1000 (titre NAS best effort).
+  Leçon ops : modifier un module partagé `plugins/_*.py` exige un restart
+  du bot (sys.modules), contrairement aux plugins eux-mêmes. Vérifié en
+  vrai (Adele NAS, playlist favorite Chill, par la voix).
 
 ## À faire (par ordre de valeur estimée)
 

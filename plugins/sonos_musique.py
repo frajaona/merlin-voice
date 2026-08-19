@@ -15,11 +15,22 @@ Résolveurs, dans l'ordre :
    playlists publiques quand l'utilisateur dit « sur Spotify ». Credentials :
    MERLIN_SPOTIFY_ID/SECRET ou data/spotify-app.json
    {"client_id": …, "client_secret": …} ; absent → résolveur désactivé.
+4. Bibliothèque NAS (phase 2b) — l'index Sonos, via le websocket HA
+   (cache disque quotidien `data/sonos-library.json`, re-scan MANUEL par
+   le bouton « 🔄 NAS » du dashboard — jamais automatique) : artistes et
+   albums jouables comme conteneurs, playlists iTunes importées, pistes
+   (listing plafonné à ~1000 par Sonos — best effort). « depuis le NAS /
+   la bibliothèque » (service=nas) force ce résolveur ; sinon il passe en
+   secours derrière les catalogues.
+5. Favoris Sonos (même canal) — tout ce qui est étoilé dans l'app Sonos,
+   dont les playlists Sonos (SQ:n) : c'est le chemin des playlists perso
+   en attendant la phase 3.
 
 Principe du gate : correspondance douteuse (score < 0.60) → on ne joue PAS,
-on renvoie les candidats. Les playlists personnelles (Apple Music) ne sont
-jouables qu'en phase 3 (AirPlay Music.app) — d'ici là : alias ou favori
-Sonos. Bibliothèque NAS : phase 2b (le REST de HA ne sait pas la parcourir).
+on renvoie les candidats. Playlists : alias → favoris Sonos → playlists
+NAS → Spotify explicite — sinon refus (on n'improvise pas sur les
+playlists publiques). Les playlists personnelles Apple Music restent
+phase 3 (AirPlay Music.app).
 
 Pièce cible : `piece`, sinon MERLIN_SONOS_DEFAULT_ROOM, sinon l'unique
 enceinte du foyer — sinon on demande.
@@ -67,8 +78,11 @@ SCHEMA = FunctionSchema(
         },
         "service": {
             "type": "string",
-            "enum": ["spotify"],
-            "description": "Uniquement si l'utilisateur nomme Spotify.",
+            "enum": ["spotify", "nas"],
+            "description": (
+                "'spotify' si l'utilisateur nomme Spotify ; 'nas' s'il dit "
+                "« depuis le NAS », « la bibliothèque » ou « nos disques »."
+            ),
         },
     },
     required=["recherche"],
@@ -136,27 +150,32 @@ def _itunes_search(term: str, entity: str, attribute: str | None = None) -> list
     return data.get("results", [])
 
 
+def _link(url: str | None):
+    """Un lien de partage devient une ref jouable (type, id) — ou None."""
+    return ("music", url) if url else None
+
+
 def _resolve_apple(recherche: str, type_: str):
-    """(url, description, candidats) — url None si rien d'assez sûr."""
-    candidates = []  # (score, url, description humaine)
+    """(ref, description, candidats) — ref None si rien d'assez sûr."""
+    candidates = []  # (score, ref jouable, description humaine)
     if type_ == "artiste":
         for r in _itunes_search(recherche, "album", attribute="artistTerm"):
             s = _score(recherche, r.get("artistName", ""))
             desc = f"l'album {r.get('collectionName')} de {r.get('artistName')}"
-            candidates.append((s, r.get("collectionViewUrl"), desc))
+            candidates.append((s, _link(r.get("collectionViewUrl")), desc))
     else:
         if type_ in ("album", ""):
             for r in _itunes_search(recherche, "album"):
                 s = _score(recherche, r.get("collectionName", ""),
                            f"{r.get('collectionName', '')} {r.get('artistName', '')}")
                 desc = f"l'album {r.get('collectionName')} de {r.get('artistName')}"
-                candidates.append((s, r.get("collectionViewUrl"), desc))
+                candidates.append((s, _link(r.get("collectionViewUrl")), desc))
         if type_ in ("titre", ""):
             for r in _itunes_search(recherche, "song"):
                 s = _score(recherche, r.get("trackName", ""),
                            f"{r.get('trackName', '')} {r.get('artistName', '')}")
                 desc = f"{r.get('trackName')} de {r.get('artistName')}"
-                candidates.append((s, r.get("trackViewUrl"), desc))
+                candidates.append((s, _link(r.get("trackViewUrl")), desc))
     return _best(candidates)
 
 
@@ -207,18 +226,18 @@ def _resolve_spotify(recherche: str, type_: str):
     for r in (data.get("albums") or {}).get("items", []):
         artists = ", ".join(a["name"] for a in r.get("artists", []))
         s = _score(recherche, r.get("name", ""), f"{r.get('name', '')} {artists}")
-        candidates.append((s, r["external_urls"]["spotify"],
+        candidates.append((s, _link(r["external_urls"]["spotify"]),
                            f"l'album {r.get('name')} de {artists}"))
     for r in (data.get("tracks") or {}).get("items", []):
         artists = ", ".join(a["name"] for a in r.get("artists", []))
         s = _score(recherche, r.get("name", ""), f"{r.get('name', '')} {artists}")
-        candidates.append((s, r["external_urls"]["spotify"],
+        candidates.append((s, _link(r["external_urls"]["spotify"]),
                            f"{r.get('name')} de {artists}"))
     for r in (data.get("playlists") or {}).get("items", []) or []:
         if not r:
             continue
         s = _score(recherche, r.get("name", ""))
-        candidates.append((s, r["external_urls"]["spotify"],
+        candidates.append((s, _link(r["external_urls"]["spotify"]),
                            f"la playlist {r.get('name')}"))
     if type_ == "artiste":
         # Un artiste n'a pas de lien jouable : prendre son meilleur album.
@@ -229,13 +248,83 @@ def _resolve_spotify(recherche: str, type_: str):
                     headers={"Authorization": f"Bearer {_spotify_token()}"},
                 )
                 for al in albums.get("items", []):
-                    candidates.append((0.9, al["external_urls"]["spotify"],
+                    candidates.append((0.9, _link(al["external_urls"]["spotify"]),
                                        f"l'album {al.get('name')} de {r.get('name')}"))
     return _best(candidates)
 
 
+# -- bibliothèque NAS et favoris (websocket HA, caches) -----------------------
+
+# Favoris : cache mémoire court (on étoile souvent des choses dans l'app).
+_browse_cache: dict[tuple, tuple[float, list]] = {}
+_BROWSE_TTL = 600
+
+# Bibliothèque NAS : cache disque quotidien dans _sonos_common (partagé avec
+# le bouton « 🔄 NAS » du dashboard) — rafraîchissement MANUEL uniquement,
+# décision Fred 19/08 : pas de re-scan automatique sur échec.
+
+
+def _browse(eid: str, content_type: str, content_id: str) -> list[dict]:
+    key = (content_type, content_id)
+    hit = _browse_cache.get(key)
+    if hit and time.monotonic() - hit[0] < _BROWSE_TTL:
+        return hit[1]
+    kids = common.ws_browse(eid, content_type, content_id)
+    _browse_cache[key] = (time.monotonic(), kids)
+    return kids
+
+
+def _album_artist(item: dict) -> str:
+    """L'artiste d'un album NAS vit dans l'id : A:ALBUM/<album>/<artiste>."""
+    parts = (item.get("media_content_id") or "").split("/")
+    return urllib.parse.unquote(parts[2]) if len(parts) >= 3 else ""
+
+
+def _resolve_nas(recherche: str, type_: str, eid: str):
+    """Cherche dans l'index Sonos du NAS (cache disque quotidien de
+    _sonos_common — re-scan manuel via le dashboard). Pistes seulement en
+    explicite (listing plafonné ~1000 par Sonos, et lourd)."""
+    types = [type_] if type_ else ["artiste", "album"]
+    candidates = []
+    for t in types:
+        ct, ci = common.NAS_CATEGORIES[t]
+        seen = set()
+        for c in common.nas_browse(eid, ct, ci):
+            title = c.get("title", "")
+            k = common.norm(title)
+            if not title or k in seen:  # playlists iTunes en double, etc.
+                continue
+            seen.add(k)
+            if t == "album":
+                artiste = _album_artist(c)
+                s = _score(recherche, title, f"{title} {artiste}")
+                desc = f"l'album {title}" + (f" de {artiste}" if artiste else "")
+            elif t == "artiste":
+                s = _score(recherche, title)
+                desc = f"les albums de {title}"
+            else:
+                s = _score(recherche, title)
+                desc = ("la playlist " if t == "playlist" else "") + title
+            candidates.append(
+                (s, (c["media_content_type"], c["media_content_id"]), desc))
+    return _best(candidates)
+
+
+def _resolve_favoris(recherche: str, eid: str):
+    """Tout ce qui est étoilé dans l'app Sonos (dont les playlists SQ:n)."""
+    candidates = []
+    for folder in _browse(eid, "favorites", ""):
+        for c in _browse(eid, folder["media_content_type"],
+                         folder["media_content_id"]):
+            s = _score(recherche, c.get("title", ""))
+            candidates.append(
+                (s, (c["media_content_type"], c["media_content_id"]),
+                 f"le favori Sonos {c.get('title')}"))
+    return _best(candidates)
+
+
 def _best(candidates: list):
-    """(url, desc, candidats_proches) — url None sous MATCH_MIN."""
+    """(ref, desc, candidats_proches) — ref None sous MATCH_MIN."""
     candidates = [c for c in candidates if c[1]]
     if not candidates:
         return None, None, []
@@ -260,6 +349,11 @@ def _target_room(piece: str, states: dict):
     return None, f"précise la pièce ({dispo})"
 
 
+def _play(eid: str, ref: tuple):
+    common.call_service("play_media", eid, {
+        "media_content_type": ref[0], "media_content_id": ref[1]})
+
+
 def _run(recherche: str, type_: str, piece: str, service: str) -> dict:
     states = common.states()
     if not states:
@@ -272,39 +366,65 @@ def _run(recherche: str, type_: str, piece: str, service: str) -> dict:
     # 1. Alias du foyer (playlists des enfants…), quel que soit le type.
     alias = _match_alias(recherche)
     if alias:
-        url, label = alias[1], alias[0]
-        common.call_service("play_media", eid, {
-            "media_content_type": "music", "media_content_id": url})
-        return {"ok": f"je lance {label} dans {nom}"}
+        _play(eid, _link(alias[1]))
+        return {"ok": f"je lance {alias[0]} dans {nom}"}
 
-    # 2. Playlists sans alias : Spotify explicite, sinon on n'improvise pas.
-    if type_ == "playlist" and service != "spotify":
-        return {"error": (
-            f"je ne connais pas la playlist '{recherche}' — ajoute-la aux "
-            "alias (data/sonos-aliases.json) ou aux favoris Sonos ; les "
-            "playlists personnelles Apple Music arrivent en phase 3"
-        )}
+    # 2. NAS explicite (« depuis le NAS / la bibliothèque »).
+    if service == "nas":
+        ref, desc, close = _resolve_nas(recherche, type_, eid)
+        if ref is None:
+            extra = f" — candidats : {'; '.join(close)}" if close else ""
+            return {"error": f"rien de sûr pour '{recherche}' sur le NAS{extra}"}
+        _play(eid, ref)
+        return {"ok": f"je lance {desc} dans {nom}", "service": "bibliothèque NAS"}
 
-    # 3. Catalogues : Apple Music d'abord (service principal), Spotify en
-    #    explicite ou en secours si configuré.
-    url = desc = None
+    # 3. Playlists : favoris Sonos → playlists NAS → Spotify explicite —
+    #    sinon refus (on n'improvise pas sur les playlists publiques).
+    if type_ == "playlist":
+        ref, desc, _ = _resolve_favoris(recherche, eid)
+        if ref is None:
+            ref, desc, _ = _resolve_nas(recherche, "playlist", eid)
+        if ref is None and service == "spotify":
+            s_ref, s_desc, _ = _resolve_spotify(recherche, "playlist")
+            ref, desc = s_ref, s_desc
+        if ref is None:
+            return {"error": (
+                f"je ne connais pas la playlist '{recherche}' — ajoute-la "
+                "aux alias (data/sonos-aliases.json) ou aux favoris Sonos ; "
+                "les playlists personnelles Apple Music arrivent en phase 3"
+            )}
+        _play(eid, ref)
+        return {"ok": f"je lance {desc} dans {nom}"}
+
+    # 4. Catalogues : Apple Music d'abord (service principal), Spotify en
+    #    explicite ou en secours si configuré — puis NAS et favoris.
+    ref = desc = None
+    source = ""
     close = []
     if service != "spotify":
-        url, desc, close = _resolve_apple(recherche, type_)
+        ref, desc, close = _resolve_apple(recherche, type_)
         source = "Apple Music"
-    if url is None and (service == "spotify" or _spotify_creds()):
-        s_url, s_desc, s_close = _resolve_spotify(recherche, type_)
-        if s_url:
-            url, desc, source = s_url, s_desc, "Spotify"
+    if ref is None and (service == "spotify" or _spotify_creds()):
+        s_ref, s_desc, s_close = _resolve_spotify(recherche, type_)
+        if s_ref:
+            ref, desc, source = s_ref, s_desc, "Spotify"
         close = close or s_close
+    if ref is None and service != "spotify":
+        n_ref, n_desc, n_close = _resolve_nas(recherche, type_, eid)
+        if n_ref:
+            ref, desc, source = n_ref, n_desc, "bibliothèque NAS"
+        close = close or n_close
+        if ref is None:
+            f_ref, f_desc, _ = _resolve_favoris(recherche, eid)
+            if f_ref:
+                ref, desc, source = f_ref, f_desc, "favoris Sonos"
 
-    if url is None:
+    if ref is None:
         if close:
             return {"error": f"pas sûr de ce que tu veux — candidats : {'; '.join(close)}"}
         return {"error": f"rien trouvé pour '{recherche}'"}
 
-    common.call_service("play_media", eid, {
-        "media_content_type": "music", "media_content_id": url})
+    _play(eid, ref)
     return {"ok": f"je lance {desc} dans {nom}", "service": source}
 
 
