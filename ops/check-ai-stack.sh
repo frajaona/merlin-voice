@@ -18,6 +18,15 @@ curl -sf --max-time 5 http://localhost:11434/api/ps | grep -q "qwen" \
   && ok "LLM épinglé (qwen)" || fail "LLM épinglé"
 curl -skf --max-time 5 https://localhost:7860/ >/dev/null \
   && ok "Bot :7860" || fail "Bot :7860"
+# Home Assistant (plan de contrôle Sonos — docs/SONOS.md). Vérifié seulement
+# si le token existe : avant ça, HA ne fait pas partie du stack surveillé.
+HA_TOKEN_FILE="$REPO/data/ha-token"
+if [[ -f "$HA_TOKEN_FILE" ]]; then
+  HA_URL="${MERLIN_HA_URL:-$(cat "$REPO/data/ha-url" 2>/dev/null)}"
+  curl -sf --max-time 5 -H "Authorization: Bearer $(cat "$HA_TOKEN_FILE")" \
+    "${HA_URL:-http://homeassistant.local:8123}/api/" >/dev/null \
+    && ok "Home Assistant" || fail "Home Assistant"
+fi
 
 echo ""
 echo "Result: $PASS ok, $FAIL failed"
