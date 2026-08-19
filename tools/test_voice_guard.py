@@ -53,6 +53,12 @@ def test_hallucination_filters():
     ) == "boucle de repetition"
     assert looks_hallucinated("Quelle est la météo demain à Bordeaux ?") is None
     assert looks_hallucinated("Merci.") is None  # short real thanks passes
+    # Music-into-mic variant (2026-08-19): same word 3+ times = hallucination;
+    # a doubled word stays valid (people really say "oui oui" / "merci merci").
+    assert looks_hallucinated("Merci. Merci. Merci.") == "boucle de repetition"
+    assert looks_hallucinated("Merci. Merci. Merci. Merci.") == "boucle de repetition"
+    assert looks_hallucinated("Merci. Merci.") is None
+    assert looks_hallucinated("Oui oui.") is None
     assert normalize_words("Salut Merlin, ça va ?") == ["salut", "merlin", "ca", "va"]
     print("ok: hallucination filters")
 

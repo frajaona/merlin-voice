@@ -960,3 +960,32 @@ Trois retours de Fred, analysés sur logs + transcripts (16:05–16:13) :
   EN HAUT (insertion en tête + accroche au sommet ; la bulle bot en
   streaming se place au-dessus de sa bulle utilisateur), les boutons
   restent visibles sans scroller.
+
+## 2026-08-19 — Retour du « Merci. » fantôme : la musique dans le micro
+
+Fred voit « beaucoup de Merci que je n'ai pas dits ». Mesuré dans
+transcripts.db (tours « merci nu » / tours utilisateur par jour) :
+22/162 le 13/08 (jour du diagnostic originel, avant le fix VAD 0.3→0.6),
+0–1/jour du 14 au 18, **33/161 le 19/08 — premier jour de lecture Sonos**.
+Mécanisme : les voix chantées des enceintes passent légitimement le VAD
+0.6, et Whisper transcrit la musique en « Merci. » (l'artefact
+sous-titres français documenté le 13/08 — no_speech_prob=0.00, les
+filtres de probabilité ne peuvent pas l'attraper). Nouveau régime
+acoustique : l'assistant CRÉE désormais le bruit de fond qu'il doit
+ignorer. Impact réel : 23 drops hors attention (inoffensifs, dataset
+STT), 7 « Merci. » acceptés en cours d'échange, et un « Merci. ×4 »
+fantôme qui a FERMÉ l'échange de Fred (passé la barre indulgente 0.35
+contre l'ancre — coloration même pièce/micro).
+
+- **Fix appliqué : mot identique ×3+ = hallucination** (extension de la
+  boucle de répétition, qui exigeait ≥8 mots) : « Merci. Merci. Merci. »
+  filtré ; un mot doublé (« oui oui », « merci merci ») reste valide —
+  ça se dit ; triplé, c'est Whisper qui transcrit les enceintes. Coût
+  assumé : un « oui oui oui » enthousiaste serait filtré (tour perdu >
+  action fausse).
+- **NE PAS toucher** : VAD 0.6 (le monter contre la musique coûterait la
+  vraie voix lointaine), barre des clôtures (le ×3+ couvre le footgun).
+- **Lead parqué : gating conscient de la musique** — Merlin sait qu'il a
+  lancé la lecture ; pendant qu'une enceinte joue, exiger une
+  vérification plus stricte (ou le mot d'éveil) pour les tours courts.
+  À rouvrir si les fantômes persistent malgré le fix ×3.

@@ -206,6 +206,14 @@ def looks_hallucinated(text: str) -> str | None:
     # Repetition loops: "t'es pas qu'on peut" ×4 etc.
     if len(words) >= 8 and len(set(words)) / len(words) < 0.4:
         return "boucle de repetition"
+    # Same word 3+ times and nothing else: "Merci. Merci. Merci." — the
+    # music-into-mic variant of the classic hallucination (measured
+    # 2026-08-19, first day of Sonos playback: 33 ghost "Merci" in one
+    # afternoon, one closed the activator's exchange). A doubled word
+    # ("oui oui", "merci merci") stays valid — people do that; a tripled
+    # one is Whisper transcribing the speakers.
+    if len(words) >= 3 and len(set(words)) == 1:
+        return "boucle de repetition"
     return None
 
 

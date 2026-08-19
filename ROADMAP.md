@@ -216,6 +216,14 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   instrumenter, voir bancs d'essai) ; 2 faux éveils du canal brut en
   environnement bruyant (données pour l'item « vrai modèle d'éveil »).
 
+- **2026-08-19** — **« Merci. » fantômes (musique dans le micro)** : retour
+  de l'hallucination Whisper du 13/08 le premier jour de lecture Sonos
+  (33/161 tours, mesuré — voir `docs/DECISIONS.md`). Fix : mot identique
+  ×3+ = hallucination filtrée (« Merci. Merci. Merci. ») ; « oui oui »
+  doublé reste valide. VAD et barre des clôtures inchangés. Lead parqué :
+  gating conscient de la musique (vérification stricte des tours courts
+  pendant qu'une enceinte joue) si les fantômes persistent.
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
