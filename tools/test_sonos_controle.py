@@ -69,8 +69,8 @@ class FakeParams:
 
 
 def run(fake, **arguments):
-    sc._entity_cache = None  # no cross-test cache
-    sc._ha_request = fake.request
+    sc.common._entity_cache = None  # no cross-test cache
+    sc.common.ha_request = fake.request
     params = FakeParams(**arguments)
     asyncio.run(sc.handler(params))
     assert len(params.results) == 1, "result_callback must fire exactly once"

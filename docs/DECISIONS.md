@@ -737,3 +737,43 @@ Fred a validé les deux pistes (a) et (b) de l'incident du matin :
 - Tests : `test_polite_closer` (classification + fermeture réelle +
   leniency oui/non préservée + clôture par l'activateur vérifié).
   Suites voice_guard et wake_word vertes, bot redémarré.
+
+## 2026-08-19 — Sonos phase 2 : choix d'implémentation de `sonos_musique`
+
+- **Périmètre ajusté vs le plan** : (1) **NAS reporté en 2b** — l'API REST
+  de HA ne sait ni parcourir ni chercher la bibliothèque Sonos (media
+  browse = websocket uniquement) ; le faire proprement passera par le WS
+  de HA ou SoCo, pas par un bricolage. (2) **Résolveur Music.app déplacé
+  en phase 3** avec sa lecture AirPlay : les playlists perso Apple Music
+  n'ont pas de lien de partage public (injouables avant la phase 3), et
+  reconnaître sans savoir jouer coûterait un second consentement TCC
+  (Automation launchd → Music.app) pour un simple « je ne peux pas ».
+- **Playlists = alias uniquement** (`data/sonos-aliases.json`,
+  `{"nom parlé": "url"}`, match flou ≥ 0.75) : iTunes Search n'a PAS
+  d'entité playlist, et chercher « ma playlist jogging » dans les
+  playlists publiques Spotify jouerait n'importe quoi — refus assumé avec
+  conseil (alias/favori), sauf Spotify demandé explicitement. Principe du
+  gate appliqué au contenu.
+- **« Joue <artiste> »** : un artiste n'a pas de lien jouable → on prend
+  son album le plus en vue (iTunes `attribute=artistTerm`, 1er résultat ;
+  Spotify : 1er album de l'artiste) et **on l'annonce** dans la réponse.
+  Raffinement possible plus tard : top-titres en file d'attente
+  (`enqueue: add` multiple).
+- **Seuil de correspondance 0.60** (difflib sur chaînes normalisées,
+  bonus sous-chaîne 0.85) : en dessous, on renvoie les candidats au lieu
+  de jouer. Vérifié en vrai : « Discovery Daft Punk », « Aldebert »
+  (→ Enfantillages), « libérée délivrée » (accents) résolvent au premier
+  coup sur le store FR.
+- **Apple Music d'abord, Spotify explicite ou secours** : credentials
+  client-credentials requis (app à créer sur developer.spotify.com →
+  `data/spotify-app.json` `{"client_id": …, "client_secret": …}` ou env
+  `MERLIN_SPOTIFY_ID/SECRET`) ; sans eux le résolveur Spotify se
+  désactive proprement (Apple Music et alias continuent de marcher).
+- **Plomberie partagée `plugins/_sonos_common.py`** (préfixe `_` = jamais
+  chargé comme plugin) : ha_request/états/matching de pièces extraits de
+  sonos_controle, importés par les deux plugins (`from plugins import
+  _sonos_common`) — une seule implémentation à maintenir.
+- Vérifié bout-en-bout (probe RTVI) : lecture réelle de Discovery dans la
+  Cuisine, refus de playlist inconnue, pause. Nuance observée : sur le
+  refus, le LLM propose l'atelier au lieu de relayer le conseil alias —
+  acceptable (le refus est le comportement critique), à surveiller.

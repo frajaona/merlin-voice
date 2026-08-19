@@ -74,6 +74,17 @@ son du salon », « groupe la cuisine avec le salon » fonctionnent à la voix.
 
 ## Phase 2 — Musique : plugin `sonos_musique` (résolveurs → lecture native)
 
+> **Statut 19/08 : fait, avec périmètre ajusté** (voir `docs/DECISIONS.md`
+> 2026-08-19 phase 2) : résolveurs v1 = alias → iTunes Search → Spotify
+> (credentials requis, `data/spotify-app.json`). **NAS reporté en 2b** (le
+> REST de HA ne sait pas parcourir la bibliothèque Sonos — il faudra le
+> websocket ou SoCo). **Résolveur Music.app déplacé en phase 3** avec sa
+> lecture (les playlists perso ne sont pas jouables avant, et ça évite un
+> second consentement TCC). Playlists = alias uniquement (ne pas
+> improviser) ; « joue <artiste> » = son album le plus en vue, annoncé.
+> Alias : `data/sonos-aliases.json`, format `{"nom parlé": "https://…"}`.
+> Validé bout-en-bout en vrai (Discovery dans la Cuisine par la voix).
+
 La valeur principale : « joue X dans la pièce Y ».
 
 - Chaîne : demande vocale → résolveur → lien de partage / URI → lecture

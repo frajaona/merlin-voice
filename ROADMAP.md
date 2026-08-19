@@ -178,6 +178,21 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   `tools/test_voice_guard.py`. Reste côté utilisateur : inscrire la famille
   (item 1) et top-up du profil de Fred en conditions cuisine.
 
+- **2026-08-19** — **Sonos phase 2 : plugin `sonos_musique`** (« joue X dans
+  la pièce Y », voir `docs/SONOS.md`). Chaîne : alias du foyer
+  (`data/sonos-aliases.json`) → iTunes Search (catalogue Apple Music) →
+  Spotify Web API (explicite ou secours ; credentials à créer →
+  `data/spotify-app.json`) → lien de partage → lecture native via HA
+  `play_media`. Correspondance douteuse (< 0.60) → demande au lieu de
+  jouer ; playlists sans alias → refus assumé (perso Apple Music = phase 3) ;
+  « joue <artiste> » → son album le plus en vue, annoncé. Plomberie HA
+  partagée extraite dans `plugins/_sonos_common.py` (sonos_controle
+  refactoré dessus). Tests : `tools/test_sonos_musique.py` (8 groupes,
+  faux HA/iTunes/Spotify). Vérifié en vrai bout-en-bout : « Joue l'album
+  Discovery de Daft Punk dans la cuisine » → lecture ; playlist inconnue →
+  refus ; pause. **Reporté en 2b : bibliothèque NAS** (browse Sonos
+  impossible en REST HA — passer par le websocket HA ou SoCo).
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
