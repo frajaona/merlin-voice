@@ -343,6 +343,69 @@ def test_embedding_separation():
     assert same > diff
 
 
+def test_polite_closer():
+    """Thanks/farewells close the exchange instead of being answered
+    (incident 2026-08-19: a bystander's 'Merci.' was leniency-credited to
+    the activator and every 'De rien !' re-armed the window)."""
+    from voice_guard import is_polite_closer
+
+    # Phrase classification: gratitude/farewell close, answers don't.
+    for text in ("Merci.", "Merci Merlin !", "Merci beaucoup, c'est gentil.",
+                 "Au revoir.", "À bientôt Merlin.", "OK merci."):
+        assert is_polite_closer(normalize_words(text)), text
+    for text in ("Oui.", "Non.", "D'accord.", "OK.", "C'est bon.",
+                 "Merci de me dire l'heure.", "Merci, merci, Daniel."):
+        assert not is_polite_closer(normalize_words(text)), text
+
+    clock = FakeClock()
+    fred, wife = unit(1), unit(2)
+    with tempfile.TemporaryDirectory() as tmp:
+        household = make_household(tmp)
+        household.finish_enrollment()
+        enroll_voice(household, "fred", fred, 100)
+        core = make_core(household, clock)
+
+        ok, why = core.evaluate("Merlin quelle heure est-il", near(fred, 2), 2.0)
+        assert ok and core.activator == "fred", why
+
+        # Bystander's short 'Merci.' -> IGNORED: no 'De rien !', never
+        # credited to the activator (old leniency path), and the exchange
+        # stays open — only the activator may close (Fred, 2026-08-19).
+        clock.t += 3
+        ok, why = core.evaluate("Merci.", near(wife, 3), 0.6)
+        assert not ok and "ignorée" in why, why
+        assert core.activator == "fred" and core.last_speaker is None
+
+        # Exchange still open: activator continues without a wake word.
+        clock.t += 2
+        ok, why = core.evaluate("et demain est-ce qu'il pleut", near(fred, 4), 2.0)
+        assert ok, why
+
+        # Unverifiable closer (no embedding) is ignored too: closing is an
+        # action, prefer not acting.
+        clock.t += 2
+        ok, why = core.evaluate("Merci.", None, 0.6)
+        assert not ok and "ignorée" in why, why
+        assert core.activator == "fred"
+
+        # Short answers to a bot question still pass the leniency.
+        clock.t += 3
+        ok, why = core.evaluate("Oui.", near(wife, 6), 0.6)
+        assert ok and "court" in why, why
+
+        # The activator's own thanks closes (lenient bar: profile/anchor).
+        clock.t += 2
+        ok, why = core.evaluate("Merci Merlin.", near(fred, 7), 0.8)
+        assert not ok and "échange fermé" in why, why
+        assert core.activator is None
+
+        # Really closed: the next sentence needs a wake again.
+        clock.t += 2
+        ok, why = core.evaluate("et après-demain il pleut", near(fred, 8), 2.0)
+        assert not ok and "hors attention" in why, why
+    print("ok: polite closers — activator closes, others ignored, answers pass")
+
+
 if __name__ == "__main__":
     test_hallucination_filters()
     test_owner_enrollment_flow()
@@ -350,5 +413,6 @@ if __name__ == "__main__":
     test_family_mode_and_short_wake()
     test_stop_and_privacy_hold()
     test_stop_activator_only()
+    test_polite_closer()
     test_embedding_separation()
     print("all voice_guard tests passed")

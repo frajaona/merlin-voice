@@ -543,3 +543,197 @@ skills), et à terme approuver à distance.
   appris des événements `gate-decision` acceptés ; sans échange connu il ne
   fait rien (« Aucun échange en cours à arrêter »). Un activateur périmé
   côté client reste inoffensif : au pire un hold en trop, un ré-éveil.
+
+## 2026-08-18 — Sonos : architecture arrêtée (HA + lecture native), plan en 4 phases
+
+Étude comparative (session Claude du 18/08) ; le plan détaillé vit dans
+`docs/SONOS.md`. Contexte décisif : un HA Yellow tourne déjà au foyer ;
+service principal = **Apple Music**, Spotify surtout pour les enfants,
+bibliothèque perso sur NAS ; Music.app connectée sur le Mac de Merlin.
+
+- **Plan de contrôle = Home Assistant (Yellow), API REST + token.** Battait
+  SoCo-direct uniquement parce que HA existe déjà (sinon SoCo gagnait :
+  zéro service en plus). Transport/volume/groupes = services `media_player.*`
+  standard ; l'intégration Sonos de HA est elle-même bâtie sur SoCo.
+- **Lecture toujours native Sonos** (comptes liés dans l'app Sonos) : les
+  enceintes streament seules, rien ne dépend du Mac. Merlin résout la demande
+  en lien de partage (mécanisme ShareLink : Spotify/Apple Music/Tidal/Deezer)
+  et le donne à l'enceinte.
+- **Apple-Music-first a inversé un choix** : Music Assistant était d'abord
+  recommandé pour la recherche multi-services, mais son provider Apple Music
+  est du reverse-engineering communautaire (auth cassable) — inacceptable
+  pour le service PRINCIPAL. Remplacé par : iTunes Search API (catalogue,
+  gratuite sans auth) + **bibliothèque Music.app via AppleScript** (playlists
+  et albums perso, iCloud Music Library = copie locale complète, zéro
+  credential — rend MusicKit et son abonnement développeur inutiles).
+- **Music.app → AirPlay 2 = chemin secondaire assumé** (playlists perso sans
+  lien public ; AppleScript sait choisir les appareils AirPlay). Implique un
+  routage par source pour pause/suivant (phase 3 du plan).
+- **Écartés** : Music Assistant (différé — se rouvre si limite 65 k pistes
+  NAS, besoin de transfer_queue, ou métadonnées riches), node-sonos-http-api
+  (démon Node redondant), API cloud Sonos (anti local-first), MusicKit
+  (redondant avec Music.app).
+- **Plafond documenté** : Apple Music n'a AUCUN transfert de session
+  vers/depuis des enceintes tierces (handoff = approximations : AirPlay
+  manuel, lien iMessage `music.apple.com`). Spotify Connect, lui, fait le
+  vrai transfert iPhone↔Sonos (`PUT /me/player`) — phase 4.
+- **À vérifier en phase 0** (peut déplacer une frontière du plan) :
+  `media_player.play_media` de HA relaie-t-il les liens de partage sur
+  Sonos ? Sinon fallback confiné SoCo ShareLink dans le plugin.
+- Contraintes projet : plugins écrits main (réseau/subprocess = bannis du
+  scan AST de l'atelier) ; principe du gate appliqué à la musique (ambiguïté
+  → demander, pas jouer au hasard) ; politique voix enfants à trancher en
+  phase 4.
+
+## 2026-08-18 — Sonos phase 1 : choix d'implémentation de `sonos_controle`
+
+- **Découverte des entités par template HA** (`integration_entities('sonos')`
+  via POST `/api/template`, cache 10 min) plutôt qu'un filtre heuristique sur
+  les attributs : c'est le seul moyen REST propre d'isoler les media_player
+  Sonos des autres (TV, casts). Fallback assumé si le template échoue : tous
+  les `media_player.*` (documenté dans le test).
+- **Pas d'action « stop »** dans le schéma, seulement « pause » : « Merlin
+  stop » est la phrase d'arrêt/mode privé (2026-08-18) — un outil « stop »
+  entrerait en collision avec elle dans les transcriptions. À garder en tête
+  pour `sonos_musique` (phase 2).
+- **Ambiguïté = refus d'agir** (principe du gate appliqué aux outils) :
+  pièce inconnue/ambiguë → erreur listant les enceintes ; aucune pièce
+  précisée → on n'agit que si UNE seule joue (ou une seule en pause pour
+  « lecture », ou `MERLIN_SONOS_DEFAULT_ROOM`) ; plusieurs jouent → on
+  demande. Aucun appel de service ne part dans ces cas (testé).
+- **Volume relatif calculé** (état lu puis `volume_set` absolu, pas
+  `volume_up/down`) : pas de course sur les steps de 5 % de HA, et « +10 »
+  ou « moins » deviennent déterministes. Échelle parlée 0–100, HA en 0–1.
+- **Pas de filler parlé** dans ce plugin : deux appels REST LAN (~100 ms),
+  sous la barre de ~1 s du contrat plugins.
+- **`grouper` : `piece` = la pièce ajoutée, `valeur` = celle dont la musique
+  continue (master du `media_player.join`)** ; master implicite = la seule
+  pièce en lecture. Correspond au français « groupe la cuisine avec le
+  salon ».
+- **Monitor** : le check HA de `check-ai-stack.sh` n'est actif que si
+  `data/ha-token` existe — HA ne devient une dépendance surveillée qu'au
+  moment où le foyer s'en sert vraiment.
+- Vérifié le 18/08 : HA joignable (`http://homeassistant.local:8123`,
+  192.168.240.143, 401 propre sans token) ; Music.app scriptable depuis le
+  terminal (TCC ok, version 1.6.6) — l'autorisation pour le contexte
+  launchd du bot reste à valider en phase 3.
+
+## 2026-08-19 — Sonos phase 0 close : verdicts mesurés
+
+- **Verdict liens de partage (décisif phase 2) : HA `play_media` relaie
+  nativement les liens Apple Music ET Spotify vers Sonos.** Testé en vrai
+  sur la Roam (volume 5 %, remis à 45 %) : `media_content_type: "music"` +
+  URL `music.apple.com/fr/album/...` → lecture (Daft Punk, Discovery) ;
+  idem `open.spotify.com/album/...`. **Pas de fallback SoCo — un seul
+  chemin de lecture, comme espéré dans `docs/SONOS.md`.**
+- **Inventaire (7 enceintes)** : Séjour, Cuisine, Bureau, Chambre, Chambre
+  Loulou, Chambre Gaby, Sonos Roam. **Piège : friendly name ≠ entity_id**
+  (`media_player.bureau` s'appelle « Chambre », `media_player.unnamed_room`
+  s'appelle « Bureau ») — toujours matcher les friendly names, jamais les
+  entity_ids. Chambre Loulou joue en continu à 6 % (bruit de sommeil
+  probable) : à garder en tête pour la logique « seule pièce en lecture »
+  et la future politique enfants.
+- **mDNS `.local` inutilisable depuis le process launchd du bot** : getaddrinfo
+  pend ~35 s puis Errno 8, alors que curl/shell résolvent — d'où
+  `data/ha-url` (IP épinglée, prioritaire sur le défaut
+  `homeassistant.local`). Penser à une réservation DHCP pour le Yellow
+  (192.168.240.143).
+- **Permission macOS « Réseau local » requise pour « Python »** : premier
+  accès LAN du bot → prompt TCC (vu à l'écran via Peekaboo), signature de
+  refus = `Errno 65 No route to host` vers une IP LAN pendant que curl
+  passe (curl = identité du terminal, déjà autorisée). Le prompt a expiré
+  sans réponse et n'est plus cliquable (UserNotificationCenter sans
+  fenêtre) ; l'automatisation Réglages Système a échoué (écran
+  verrouillé) → toggle manuel : Réglages Système → Confidentialité et
+  sécurité → Réseau local → Python ON. S'applique à TOUT python du Mac
+  (le venv du shell est logé à la même enseigne, seul curl passait).
+- **Wyoming : conserver `com.wyoming.*`** — `integration_entities('wyoming')`
+  sur le Yellow liste `stt.faster_whisper`, `stt.mlx_whisper`, `tts.piper`,
+  `tts.piper_2` : le Yellow consomme bien les services Wyoming de ce Mac.
+- **Music.app opérationnelle pour la phase 2** : après ouverture + session
+  (Fred, 19/08), 248 playlists lisibles en AppleScript, enceintes Sonos
+  visibles comme appareils AirPlay. Les timeouts AppleEvent -1712 du 18/08
+  = app jamais ouverte, pas un problème TCC.
+
+## 2026-08-19 — Permission « Réseau local » : résolution, et phase 1 validée
+
+- **Le panneau Réseau local contient PLUSIEURS entrées Python** (constaté
+  dans `/Library/Preferences/com.apple.networkextension.plist` :
+  `/usr/bin/python3`, un cpython uv 3.11, et `org.python.python`). Celle du
+  bot (et du venv) est **« Python » = `org.python.python`** (le framework
+  Homebrew python@3.12). Diagnostic différentiel : `/usr/bin/python3`
+  passait, `venv/bin/python` recevait Errno 65 → mauvaise entrée activée
+  au premier essai.
+- **Le grant ne s'applique qu'aux processus démarrés après** : après
+  activation du bon toggle, il a fallu `launchctl kickstart -k` du bot
+  (un bot déjà lancé garde Errno 65).
+- Aide-mémoire : `Errno 65 No route to host` vers une IP LAN pendant que
+  curl passe = permission Réseau local, pas un problème réseau.
+- **Phase 1 validée en vrai** (probe RTVI tapée, même LLM/outils que la
+  voix) : « Remets la musique dans la cuisine » → lecture réelle vérifiée
+  côté HA ; « volume à 15 » → 0.15 vérifié ; « qu'est-ce qui joue ? » →
+  titre réel restitué ; « pause » → paused vérifié. Volume Cuisine remis
+  à 10 % après les tests. Une réponse chat vide observée sur un tour à
+  outil (l'action a bien eu lieu) — probablement le timing de la sonde,
+  à surveiller en usage vocal réel.
+
+## 2026-08-19 — Incident gate du petit-déjeuner (données de calibration)
+
+Contexte : tests Sonos de Fred, cuisine, musique en cours, famille présente.
+Deux ratés rapportés par Fred, tous deux conformes au design actuel — mais
+le coût réel est maintenant mesuré (tout est dans transcripts.db) :
+
+- **Faux rejet** : phrase d'éveil claire de Fred à **sim=0.45** (loin
+  champ + musique dans la pièce ; sa plage propre : 0.72–0.89 ; répétée de
+  plus près : 0.90). 0.45 est DANS la plage mesurée de sa femme
+  (0.08–0.54) → ne PAS baisser le seuil 0.60 ; la réponse est un top-up de
+  profil en conditions cuisine (`voice_profile.py enroll fred`).
+- **Fausse acceptation** : « Merci. » de sa femme accepté 3× via la
+  **leniency tours courts** (`fred (court, non vérifié)`) pendant la
+  fenêtre question de 30 s — ouverte parce que le LLM finit ses réponses
+  par « Tu veux que je change quelque chose ? », et ré-ouverte à chaque
+  « De rien ! ». Ses phrases longues étaient correctement rejetées
+  (sim 0.06–0.16). L'échange est resté ouvert > 1 min (épisode « lapin »).
+- **Pistes retenues (non implémentées)** : (a) mots de clôture
+  (« merci », « d'accord ») → fermer l'échange au lieu de répondre, en
+  gardant oui/non ; (b) fenêtre question moins généreuse (prompt LLM sans
+  question de politesse, ou MERLIN_QUESTION_SECS 30→15, ou fenêtre armée
+  seulement sur vraie clarification d'outil) ; (c) inscrire la femme et
+  les enfants (ROADMAP item 1) — préalable à toute leniency plus fine.
+
+## 2026-08-19 — Clôture polie et fenêtre question (suite de l'incident)
+
+Fred a validé les deux pistes (a) et (b) de l'incident du matin :
+
+- **Clôture polie** (`is_polite_closer`, voice_guard.py) : pendant un
+  échange, un énoncé qui n'est QUE remerciement/adieu (≤ 6 mots, au moins
+  un cœur `merci/revoir/bientot/adieu`, le reste dans une liste fermée de
+  mots d'accompagnement) **ferme l'échange** (`_close_exchange`) et n'est
+  pas répondu — motif `[filtré: clôture polie (échange fermé)]`. Choix
+  clés : (1) les cœurs excluent « ok/d'accord/oui/non » — ce sont des
+  réponses légitimes aux questions du bot, ils restent couverts par la
+  leniency courte ; (2) la vérification passe AVANT la leniency courte
+  (c'est elle qui créditait les « Merci. » d'un tiers à l'activateur) ;
+  (3) **seul l'activateur peut clore** (demande Fred, même jour — la
+  première version acceptait toute voix) : barre indulgente
+  `_is_activator_lenient` (SHORT_WAKE_SIM contre profil OU ancre vive,
+  comme le stop activator-only), mais contrairement au stop une voix
+  invérifiable (embedding manquant ou sous la barre) NE clôt PAS — clore
+  est une action, le gate préfère ne pas agir. Une clôture non-activateur
+  est **ignorée** : ni « De rien ! », ni fermeture, la fenêtre expire
+  d'elle-même (`[filtré: clôture polie ignorée …]`). Le chemin fail-open
+  (embedding indisponible) ignore aussi les clôtures pures au lieu de les
+  accepter. Coût assumé : un « Merci. » trop court de l'activateur peut
+  être ignoré (les embeddings 1 mot peuvent scorer bas même pour leur
+  locuteur) — l'échange ne ferme pas mais ne répond rien, la fenêtre
+  meurt en 12–15 s. « Merci, merci, Daniel. » ne clôt PAS (mot hors
+  liste) — il repasse par la leniency, comme dans l'incident : la clôture
+  ne traite que les tours purs.
+- **Fenêtre question 30 → 15 s** (`MERLIN_QUESTION_SECS`) + prompt système :
+  interdiction de terminer par une question de politesse (« Tu veux autre
+  chose ? ») — c'était le mécanisme qui armait la fenêtre longue en continu
+  pendant que la famille parlait. La fenêtre longue ne sert plus qu'aux
+  vraies clarifications (il manque une info pour agir).
+- Tests : `test_polite_closer` (classification + fermeture réelle +
+  leniency oui/non préservée + clôture par l'activateur vérifié).
+  Suites voice_guard et wake_word vertes, bot redémarré.

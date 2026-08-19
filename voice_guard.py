@@ -51,7 +51,12 @@ Environment knobs (all optional):
                               weaker in public)
     MERLIN_REQUIRE_WAKE       "0" to disable the attention gate
     MERLIN_FOLLOWUP_SECS      follow-up window after the bot stops (12)
-    MERLIN_QUESTION_SECS      follow-up window after a bot question (30)
+    MERLIN_QUESTION_SECS      follow-up window after a bot question (15)
+Polite closers: mid-exchange, an utterance that is nothing but thanks or
+farewell ("Merci.", "Merci Merlin", "Au revoir") CLOSES the exchange instead
+of being answered — but only when the voice looks like the ACTIVATOR
+(lenient SHORT_WAKE_SIM bar, profile or live anchor). Any other or
+unverifiable voice is ignored: no reply, no close, the window just expires.
 """
 import asyncio
 import io
@@ -112,6 +117,32 @@ HOLD_REASON = "privé"
 def has_stop_word(words: list) -> bool:
     return any(w in STOP_WORDS for w in words)
 
+
+# Clôture polie : « merci » / « au revoir » pendant un échange = fin de
+# l'échange, pas un tour à répondre. Motivé par l'incident du 2026-08-19 :
+# les « Merci. » d'un tiers pendant la fenêtre de suivi étaient crédités à
+# l'activateur (leniency tours courts) et chaque « De rien ! » ré-armait la
+# fenêtre — l'échange ne mourait jamais. Cœurs volontairement limités aux
+# remerciements/adieux : PAS « ok »/« d'accord »/« oui », qui sont des
+# réponses légitimes aux questions du bot (ils restent de simples mots
+# d'accompagnement ici).
+CLOSER_CORE = frozenset(("merci", "revoir", "bientot", "adieu"))
+CLOSER_FILLER = frozenset((
+    "merlin", "beaucoup", "bien", "tres", "c", "est", "gentil", "super",
+    "parfait", "nickel", "top", "cool", "a", "au", "la", "le", "prochaine",
+    "bon", "bonne", "nuit", "journee", "soiree", "et", "ca", "va", "d",
+    "accord", "ok",
+))
+
+
+def is_polite_closer(words: list) -> bool:
+    """True when the whole (normalized) utterance is a thanks/farewell."""
+    return (
+        0 < len(words) <= 6
+        and any(w in CLOSER_CORE for w in words)
+        and all(w in CLOSER_CORE or w in CLOSER_FILLER for w in words)
+    )
+
 STT_MODEL = os.getenv("MERLIN_STT_MODEL", "mlx-community/whisper-large-v3-turbo")
 SPEAKER_GATE_ENABLED = os.getenv("MERLIN_SPEAKER_GATE", "on").lower() not in ("off", "0", "false")
 # Calibrated 2026-08-13 on real data: owner's utterances score 0.72-0.89
@@ -121,7 +152,11 @@ FAMILY_MODE = os.getenv("MERLIN_FAMILY_MODE", "0").lower() in ("1", "on", "true"
 STOP_ACTIVATOR_ONLY = os.getenv("MERLIN_STOP_ACTIVATOR_ONLY", "0").lower() in ("1", "on", "true")
 REQUIRE_WAKE = os.getenv("MERLIN_REQUIRE_WAKE", "1").lower() not in ("off", "0", "false")
 FOLLOWUP_SECS = float(os.getenv("MERLIN_FOLLOWUP_SECS", "12"))
-QUESTION_SECS = float(os.getenv("MERLIN_QUESTION_SECS", "30"))
+# 30 → 15 le 2026-08-19 : le LLM finissait ses réponses par des questions de
+# politesse, armant la fenêtre longue en continu pendant que la famille
+# parlait (voir DECISIONS 2026-08-19) ; le prompt interdit désormais ces
+# questions, la fenêtre longue ne sert plus qu'aux vraies clarifications.
+QUESTION_SECS = float(os.getenv("MERLIN_QUESTION_SECS", "15"))
 
 # Enrollment
 ENROLL_TARGET = 8          # profile is complete after this many utterances
@@ -429,9 +464,27 @@ class GateCore:
             return None
         return float(np.dot(_normed_mean(self._anchor), embedding))
 
+    def _is_activator_lenient(self, embedding) -> bool:
+        """Short-utterance identity check against the activator, at the
+        lenient SHORT_WAKE_SIM bar (profile or live anchor) — closers are
+        short, the full bar would miss real ones. Unlike stops, an
+        unverifiable voice does NOT pass: closing is an action, and the
+        gate prefers not acting."""
+        if embedding is None or self.activator is None:
+            return False
+        name, sim = self.household.best_match(embedding)
+        if name == self.activator and sim is not None and sim >= SHORT_WAKE_SIM:
+            return True
+        anchor_sim = self._anchor_sim(embedding)
+        return anchor_sim is not None and anchor_sim >= SHORT_WAKE_SIM
+
     def _bind(self, name: str | None, embedding=None):
         self.activator = name
         self._anchor = [embedding] if embedding is not None else []
+
+    def _close_exchange(self):
+        self._bind(None)
+        self._attentive_until = 0.0
 
     def _extend_anchor(self, embedding):
         self._anchor.append(embedding)
@@ -481,8 +534,7 @@ class GateCore:
         stop channel (WakeWordListener callback)."""
         if self._hold_since is None:
             logger.info("VoiceGate: privacy hold ON (stop phrase)")
-        self._bind(None)
-        self._attentive_until = 0.0
+        self._close_exchange()
         self._hold_since = self._now()
 
     def _evaluate_on_hold(self, transcript_wake: bool, embedding, duration: float, words: list) -> tuple:
@@ -557,6 +609,11 @@ class GateCore:
             return True, "gate locuteur désactivé"
 
         if embedding is None:  # extraction failed — fail open, keep binding as-is
+            # Sauf pour une clôture pure : y répondre (« De rien ! ») relance
+            # l'échange, et sans voix on ne peut pas savoir si c'est
+            # l'activateur — on l'ignore (clore est une action).
+            if self.activator is not None and attentive and is_polite_closer(words):
+                return False, "clôture polie ignorée (voix non vérifiée)"
             self._touch_attention()
             return True, "vérification indisponible"
 
@@ -572,6 +629,18 @@ class GateCore:
 
         # Mid-exchange: is this the activator continuing?
         if self.activator is not None and attentive:
+            # « Merci. » / « Au revoir » = clôture, pas un tour à répondre.
+            # Vérifié AVANT la leniency courte (c'est elle qui créditait les
+            # remerciements d'un tiers à l'activateur). Seul l'ACTIVATEUR
+            # peut clore (demande Fred, 19/08) — barre indulgente car les
+            # clôtures sont courtes ; une autre voix (ou une voix
+            # invérifiable) est ignorée : ni « De rien ! », ni fermeture,
+            # la fenêtre expirera d'elle-même.
+            if is_polite_closer(words):
+                if self._is_activator_lenient(embedding):
+                    self._close_exchange()
+                    return False, "clôture polie (échange fermé)"
+                return False, "clôture polie ignorée (pas l'activateur)"
             if not verified:
                 self._touch_attention()
                 self.last_speaker = self.activator

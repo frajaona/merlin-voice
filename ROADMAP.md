@@ -131,6 +131,53 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   (/api/stop scopé) ; vérifié en vrai (probe connectée + curl → hold +
   message reçu ; 401/400/404 vérifiés).
 
+- **2026-08-18** — **Sonos phases 0–1** (`docs/SONOS.md`) : plugin
+  **`sonos_controle`** (lecture/pause/suivant/précédent, volume
+  absolu/relatif/muet, aléatoire, répétition, grouper/dégrouper, statut) via
+  l'API REST de HA (`http://homeassistant.local:8123`, joignable, 401 sans
+  token — token à créer par Fred → `data/ha-token`). Découverte des entités
+  par template `integration_entities('sonos')` (fallback : tous les
+  media_player), pièces en français flou (accents/articles), ambiguïté →
+  refus d'agir (principe du gate). Tests hors-ligne :
+  `tools/test_sonos_controle.py` (8 cas, fake HA). Monitor : check HA ajouté
+  à `ops/check-ai-stack.sh` (actif seulement si `data/ha-token` existe).
+  Phase 0 close (19/08, token fourni par Fred) : **7 enceintes inventoriées**
+  (Séjour, Cuisine, Bureau, Chambre, Chambre Loulou, Chambre Gaby, Sonos
+  Roam — attention : friendly names ≠ entity_ids, `media_player.bureau` =
+  « Chambre » et `media_player.unnamed_room` = « Bureau » ; le plugin matche
+  les friendly names, c'est le bon comportement) ; **verdict décisif phase
+  2 : `play_media` HA relaie les liens de partage Apple Music ET Spotify**
+  (albums testés en vrai sur la Roam à 5 % — pas de fallback SoCo
+  nécessaire) ; **Music.app OK** (248 playlists, Sonos visibles en AirPlay
+  2) après ouverture/permissions par Fred (les requêtes bibliothèque
+  timeout-aient app fermée) ; **`com.wyoming.*` : CONSERVER** (le Yellow a
+  des entités actives `stt.faster_whisper`/`stt.mlx_whisper`/`tts.piper`).
+  URL HA épinglée par IP dans `data/ha-url` (mDNS `.local` échoue depuis le
+  process launchd). **Dernier blocage** : autorisation « Réseau local »
+  macOS pour « Python » (Réglages Système → Confidentialité → Réseau
+  local) — **réglé le 19/08** (il y avait PLUSIEURS entrées Python dans le
+  panneau ; c'est « Python » = `org.python.python`, le framework Homebrew,
+  qu'il fallait activer, PUIS redémarrer le bot — voir `docs/DECISIONS.md`).
+  **Phase 1 validée bout-en-bout en vrai le 19/08** via `probe_rtvi.py` :
+  statut (« rien ne joue »), reprise de lecture dans la Cuisine (vérifiée
+  playing côté HA), volume à 15 (vérifié 0.15), statut avec titre réel
+  (Keen' V — Outété), pause (vérifiée). Reste : test à la voix par Fred en
+  conditions réelles, puis phase 2 (`sonos_musique`).
+
+- **2026-08-19** — **Clôture polie + fenêtre question resserrée** (réponse à
+  l'incident du petit-déjeuner, voir `docs/DECISIONS.md` 19/08) : « Merci. »,
+  « Merci Merlin », « Au revoir » pendant un échange **ferment l'échange**
+  au lieu d'être répondus (`is_polite_closer` dans `voice_guard.py`, cœurs =
+  remerciements/adieux uniquement — « oui/non/ok/d'accord » passent toujours
+  la leniency courte ; **seul l'activateur peut clore** (barre indulgente
+  SHORT_WAKE_SIM, profil ou ancre) — toute autre voix ou voix invérifiable
+  est ignorée : ni réponse, ni fermeture). `MERLIN_QUESTION_SECS` 30 → 15 et
+  le prompt système interdit les
+  questions de politesse en fin de réponse (c'est elles qui armaient la
+  fenêtre longue en continu). Tests : `test_polite_closer` dans
+  `tools/test_voice_guard.py`. Reste côté utilisateur : inscrire la famille
+  (item 1) et top-up du profil de Fred en conditions cuisine.
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
@@ -161,6 +208,14 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
 8. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
    données synthétiques françaises) si le zipformer montre des faiblesses en
    conditions bruyantes.
+9. **Sonos multiroom** : plan complet en 4 phases dans **`docs/SONOS.md`**
+   (architecture arrêtée le 18/08, voir `docs/DECISIONS.md`). Résumé : HA
+   Yellow = plan de contrôle (REST), lecture toujours native Sonos (liens de
+   partage), résolveurs minces (Music.app AppleScript pour Apple Music perso,
+   iTunes Search pour le catalogue, alias/Web API Spotify, index NAS Sonos),
+   Music.app→AirPlay 2 seulement pour les playlists perso. La phase 1 crée le
+   client HA réutilisable par l'outil `home_assistant` (lumières/volets, item
+   de la revue du 13/08).
 
 ## À faire — reliquat de la revue du 13/08 (« The Merlin Review »)
 
@@ -183,9 +238,10 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   du téléphone.
 - ~~LaunchAgents périmés~~ **fait 18/08** : warmup supprimé, monitor réécrit,
   `com.merlin.bot` (KeepAlive) pour la survie au reboot — voir `ops/README.md`.
-  Reste ouvert : sort de `com.wyoming.whisper`/`com.wyoming.piper` (tournent
-  encore, :10300/:10200) — vérifier si le HA Yellow les utilise (protocole
-  Wyoming) avant de les supprimer.
+  ~~Sort de `com.wyoming.*`~~ **tranché 19/08 : CONSERVER** — le Yellow a
+  des entités Wyoming actives (`stt.faster_whisper`, `stt.mlx_whisper`,
+  `tts.piper`, `tts.piper_2` via `integration_entities('wyoming')`), ces
+  LaunchAgents servent l'assist vocal de HA.
 - **Issues Pipecat upstream** à déposer (keep-alive coupe l'audio ; pacing en
   rafale — reproduisibles avec `tools/probe_barge_in.py` ; RTVI `send-text` :
   le restore de skip_tts tombe entre les deux runs LLM d'un tour à outil,
