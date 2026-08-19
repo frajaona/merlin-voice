@@ -537,6 +537,16 @@ class GateCore:
         self._close_exchange()
         self._hold_since = self._now()
 
+    def lift_hold(self):
+        """Sortie du mode privé sans éveil vocal — bouton « 🔔 » du
+        dashboard (POST /api/resume). Le token Bearer est l'autorité du
+        foyer, même logique que le bouton 🤫 (DECISIONS 18/08). Ne rouvre
+        PAS l'attention : l'éveil vocal normal redevient simplement
+        possible (avec sa leniency courte et le canal brut)."""
+        if self._hold_since is not None:
+            self._hold_since = None
+            logger.info("VoiceGate: privacy hold lifted (HTTP)")
+
     def _evaluate_on_hold(self, transcript_wake: bool, embedding, duration: float, words: list) -> tuple:
         """Only a verified activation lifts the hold: wake word (transcript,
         or raw channel fired AFTER the hold started), enrolled voice at the
@@ -554,10 +564,24 @@ class GateCore:
             self._touch_attention()
             logger.info("VoiceGate: privacy hold lifted (speaker gate off)")
             return True, "fin du mode privé (gate locuteur désactivé)"
+        # À partir d'ici c'est une TENTATIVE d'éveil sous privé : on journalise
+        # la cause du refus (jamais le contenu — le motif seulement), sinon un
+        # hold « impossible à lever » est indiagnosticable (vécu le 19/08 :
+        # 2 min 30 de tentatives sans aucune trace exploitable).
         if embedding is None or duration < VERIFY_MIN_SECS or len(words) < VERIFY_MIN_WORDS:
+            logger.info(
+                "VoiceGate: éveil sous privé refusé — énoncé trop court ou "
+                f"embedding indisponible ({duration:.1f}s, {len(words)} mots) ; "
+                "il faut une phrase complète (« Merlin, tu es là ? »)"
+            )
             return False, HOLD_REASON
         name, sim = self.household.best_match(embedding)
         if name is None or sim is None or sim < self._threshold:
+            logger.info(
+                f"VoiceGate: éveil sous privé refusé — meilleur profil "
+                f"{name or 'aucun'}, sim={0.0 if sim is None else sim:.2f} "
+                f"< {self._threshold} (barre pleine, pas de leniency sous privé)"
+            )
             return False, HOLD_REASON
         self._hold_since = None
         self._bind(name, embedding)

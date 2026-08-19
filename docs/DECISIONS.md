@@ -920,3 +920,43 @@ plan de contrôle unique) ; (3) le manque est déjà couvert (favoris Sonos
 pénible au quotidien ET l'AirPlay de la phase 3 trop dépendant du Mac —
 alors SMAPI, cantonné à la recherche de playlists perso, favoris en
 secours permanent.
+
+## 2026-08-19 — Analyse de la session de l'après-midi (invités, démos Sonos)
+
+Trois retours de Fred, analysés sur logs + transcripts (16:05–16:13) :
+
+- **Latences.** Les outils étaient rapides (sonos_musique 1,2–1,8 s,
+  sonos_controle 0,04–0,7 s). Deux mécanismes réels : (1) « Joue le
+  dernier album d'Ed Sheeran » = 12 s ressenties — 3 passes LLM
+  (web_search « dernier album » 3 s → question de pièce → lecture),
+  inhérent au tour multi-étapes ; (2) **une génération LLM de 24 s**
+  (« Séjour » → grouper, 16:08:52→16:09:16, une seule passe, pas de
+  restart) pendant un brouhaha continu : VAD/Whisper/zipformer/embeddings
+  tournaient toutes les 1–3 s sur le même GPU que le décodage qwen, plus
+  une interruption d'agrégation juste avant. Hypothèse dominante :
+  contention GPU en conversation chargée (+ re-prefill après
+  interruption). **Lead** : instrumenter le TTFT par tour (métriques
+  pipecat) pour confirmer avant tout tuning. Rappel : ~35 s sur le tout
+  premier tour après un restart du bot (vu 2×).
+- **Mode privé impossible à quitter** (16:09:57→16:12:26, sorti par
+  reconnexion). Causes empilées : la levée vocale exige la barre PLEINE
+  0.60 sans leniency (design) alors que ses éveils du jour scoraient
+  0.38–0.88 selon l'acoustique ; les refus de levée n'étaient PAS
+  journalisés (indiagnosticable) ; le bouton 🤫 (/api/stop) matchait « 0
+  session » car enter_hold délie l'activateur ; et il n'existait AUCUNE
+  sortie HTTP. **Corrigé** : (1) refus de levée journalisés (motif
+  seulement, jamais le contenu — sim/durée) ; (2) **POST /api/resume** +
+  bouton « 🔔 Réveiller » (toujours visible) : lève le hold de toutes les
+  sessions retenues — non scopé (plus d'activateur à qui scoper), token =
+  autorité du foyer comme le 🤫. La barre vocale pleine reste inchangée
+  (le durcir moins = affaiblir le hold ; l'issue garantie est le bouton).
+- **Données de calibration au passage** : le canal d'éveil brut a ouvert
+  deux échanges sans « Merlin » dans la transcription (« Merci. » accepté
+  comme éveil sim=0.88, puis « Bonjour, Baptiste. » répondu) — faux
+  éveils en environnement bruyant, grain à moudre pour l'item ROADMAP
+  « vrai modèle d'éveil ». Les clôtures polies ont fonctionné en vrai
+  (2 « Merci. » tiers ignorés, « Merci ×4 » de l'activateur a fermé).
+- **UI** : fil de conversation inversé (demande Fred) — dernier message
+  EN HAUT (insertion en tête + accroche au sommet ; la bulle bot en
+  streaming se place au-dessus de sa bulle utilisateur), les boutons
+  restent visibles sans scroller.

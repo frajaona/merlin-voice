@@ -110,6 +110,36 @@ async def sonos_refresh():
     return {"refreshed": counts}
 
 
+@stop_router.post("/resume")
+async def resume_all():
+    """Bouton « 🔔 » : lève le mode privé de TOUTES les sessions retenues.
+    Pas de scope par personne : enter_hold délie l'activateur, il n'y a
+    plus personne à qui scoper — et le token est l'autorité du foyer
+    (même logique que /api/stop). Motivé par l'incident du 19/08 : hold
+    impossible à lever à la voix (acoustique), /api/stop matchait 0
+    session, seule issue = reconnexion."""
+    resumed = []
+    for sid, s in list(_sessions.items()):
+        core = s["core"]
+        if not getattr(core, "on_hold", False):
+            continue
+        core.lift_hold()
+        try:
+            await s["rtvi"].send_server_message({
+                "event": "gate-decision",
+                "accepted": False,
+                "reason": "fin du mode privé (requête HTTP)",
+                "speaker": None,
+                "text": "(reprise manuelle)",
+                "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            })
+        except Exception as e:
+            logger.warning(f"resume: session {sid}: {e}")
+        resumed.append(sid)
+    logger.info(f"privacy hold lifted via HTTP on {len(resumed)} session(s)")
+    return {"resumed": len(resumed)}
+
+
 @stop_router.post("/stop")
 async def stop_person(body: dict):
     speaker = str(body.get("speaker", "")).strip()

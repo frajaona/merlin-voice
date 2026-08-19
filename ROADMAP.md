@@ -205,6 +205,17 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   du bot (sys.modules), contrairement aux plugins eux-mêmes. Vérifié en
   vrai (Adele NAS, playlist favorite Chill, par la voix).
 
+- **2026-08-19** — **Sortie du mode privé + fil inversé** (analyse de la
+  session invités, voir `docs/DECISIONS.md` 19/08) : bouton « 🔔
+  Réveiller » + `POST /api/resume` (lève le hold de toutes les sessions —
+  la levée vocale à barre pleine reste inchangée, le bouton est l'issue
+  garantie) ; refus de levée désormais journalisés (motif seulement) ;
+  fil de conversation du dashboard inversé (dernier message en haut,
+  boutons toujours visibles). Constats consignés : latence 24 s d'une
+  génération LLM en plein brouhaha (contention GPU probable — à
+  instrumenter, voir bancs d'essai) ; 2 faux éveils du canal brut en
+  environnement bruyant (données pour l'item « vrai modèle d'éveil »).
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
@@ -290,6 +301,12 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   `reasoning_effort` élevé (4–5 s, annoncé par une phrase-pont).
 
 ### Bancs d'essai (données avant conviction — utiliser transcripts.db)
+
+- **Latence en conversation chargée (constat du 19/08)** : une génération
+  LLM de 24 s pendant un brouhaha continu (STT/éveil/embeddings sur le
+  même GPU que qwen, + interruption d'agrégation juste avant), et ~35 s
+  sur le premier tour après un restart du bot (vu 2×). Instrumenter le
+  TTFT par tour (métriques pipecat) avant tout tuning.
 
 - **LLM, étape 0 — FAIT 14/08, verdict : rester sur q4_K_M.** nvfp4/MLX
   mesuré : TTFT médian 0,09 s vs 0,33 s mais régression tool-call (9/15 vs

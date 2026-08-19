@@ -193,6 +193,45 @@ def test_stop_endpoint():
     print("ok: /api/stop endpoint (scoped per enrolled person)")
 
 
+def test_resume_endpoint():
+    """POST /api/resume: lifts the privacy hold of every held session."""
+
+    class FakeCore:
+        def __init__(self, held):
+            self.on_hold = held
+
+        def lift_hold(self):
+            self.on_hold = False
+
+    class FakeRtvi:
+        def __init__(self):
+            self.messages = []
+
+        async def send_server_message(self, data):
+            self.messages.append(data)
+
+    dashboard_api._token = "secret-test-token"
+    app = FastAPI()
+    app.include_router(dashboard_api.stop_router)
+    client = TestClient(app)
+    held, idle = FakeCore(True), FakeCore(False)
+    rtvi = FakeRtvi()
+    dashboard_api.register_session("h1", held, rtvi)
+    dashboard_api.register_session("h2", idle, FakeRtvi())
+    try:
+        assert client.post("/api/resume").status_code == 401
+        resp = client.post("/api/resume", headers=auth())
+        assert resp.status_code == 200 and resp.json() == {"resumed": 1}, resp.json()
+        assert not held.on_hold and not idle.on_hold
+        assert rtvi.messages and rtvi.messages[0]["reason"] == "fin du mode privé (requête HTTP)"
+        # Nothing held anymore -> 0, idempotent.
+        assert client.post("/api/resume", headers=auth()).json() == {"resumed": 0}
+    finally:
+        dashboard_api.unregister_session("h1")
+        dashboard_api.unregister_session("h2")
+    print("ok: /api/resume endpoint (lifts every held session)")
+
+
 def test_sonos_refresh():
     with tempfile.TemporaryDirectory() as tmp:
         client = make_client(Path(tmp), lambda slug: Path(f"plugins/{slug}.py"))
@@ -223,5 +262,6 @@ if __name__ == "__main__":
     test_approve()
     test_dismiss()
     test_stop_endpoint()
+    test_resume_endpoint()
     test_sonos_refresh()
     print("all dashboard_api tests passed")

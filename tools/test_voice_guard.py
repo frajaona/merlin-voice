@@ -343,6 +343,35 @@ def test_embedding_separation():
     assert same > diff
 
 
+def test_lift_hold_http():
+    """GateCore.lift_hold(): sortie HTTP du mode privé (bouton 🔔 —
+    incident 19/08 : hold impossible à lever à la voix en mauvaise
+    acoustique, aucune issue à part reconnecter)."""
+    clock = FakeClock()
+    fred = unit(1)
+    with tempfile.TemporaryDirectory() as tmp:
+        household = make_household(tmp)
+        household.finish_enrollment()
+        enroll_voice(household, "fred", fred, 100)
+        core = make_core(household, clock)
+        ok, _ = core.evaluate("Merlin quelle heure est-il", near(fred, 2), 2.0)
+        assert ok
+        core.enter_hold()
+        assert core.on_hold
+        # Sous privé, un éveil court reste refusé (barre pleine, par design).
+        clock.t += 2
+        ok, why = core.evaluate("Merlin tu es là", near(fred, 3), 0.6)
+        assert not ok, why
+        core.lift_hold()
+        assert not core.on_hold
+        # L'éveil normal remarche, leniency courte incluse.
+        clock.t += 2
+        ok, why = core.evaluate("Merlin ?", near(fred, 4), 0.6)
+        assert ok and "court" in why, why
+        core.lift_hold()  # idempotent hors hold
+    print("ok: lift_hold (HTTP) sort du mode privé, éveil normal restauré")
+
+
 def test_polite_closer():
     """Thanks/farewells close the exchange instead of being answered
     (incident 2026-08-19: a bystander's 'Merci.' was leniency-credited to
@@ -413,6 +442,7 @@ if __name__ == "__main__":
     test_family_mode_and_short_wake()
     test_stop_and_privacy_hold()
     test_stop_activator_only()
+    test_lift_hold_http()
     test_polite_closer()
     test_embedding_separation()
     print("all voice_guard tests passed")

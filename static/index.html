@@ -120,6 +120,12 @@
       background: transparent; border: 1px solid var(--red, #b3423f); color: var(--red, #b3423f);
       padding: 7px 18px; border-radius: 20px; cursor: pointer; font-size: 0.8rem;
     }
+    /* Always visible too: the way OUT of privacy mode when the voice lift
+       fails (bad acoustics) — HTTP, works from any authed browser. */
+    #btn-resume {
+      background: transparent; border: 1px solid var(--blue, #4a90d9); color: var(--blue, #4a90d9);
+      padding: 7px 18px; border-radius: 20px; cursor: pointer; font-size: 0.8rem;
+    }
     #voice-buttons { display: flex; gap: 10px; }
     audio { display: none; }
 
@@ -282,6 +288,7 @@
       <div id="status">Appuie pour te connecter</div>
       <div id="voice-buttons">
         <button id="btn-stop" title="Coupe et passe en mode privé (comme « Merlin, chut »)">🤫 Chut</button>
+        <button id="btn-resume" title="Sort du mode privé (« Merlin, tu es là ? » en HTTP)">🔔 Réveiller</button>
         <button id="btn-disconnect">Déconnecter</button>
       </div>
       <!-- No `muted` attribute: it's boolean, muted="false" still mutes -->
@@ -382,6 +389,23 @@
         setStatus(r.stopped
           ? `Mode privé pour ${r.speaker} — « Merlin, tu es là ? » pour reprendre`
           : `Aucune session active pour ${r.speaker}`);
+      }
+    });
+
+    // ---- resume (exit privacy mode) ------------------------------------------
+    // The voice lift ("Merlin, tu es là ?") needs the full similarity bar and
+    // can fail in bad acoustics; this is the guaranteed exit (token = household
+    // authority, same logic as the Chut button).
+    $('btn-resume').addEventListener('click', async () => {
+      const resp = await fetch('/api/resume', {
+        method: 'POST', headers: authHeaders(),
+      }).catch(() => null);
+      if (!resp || resp.status === 401) return showTokenPrompt('Token requis.');
+      if (resp.ok) {
+        const r = await resp.json();
+        setStatus(r.resumed
+          ? `Mode privé levé (${r.resumed} session${r.resumed > 1 ? 's' : ''}) — « Merlin… » réécoute`
+          : 'Aucune session en mode privé');
       }
     });
 
@@ -570,6 +594,14 @@
 
     function scrolledToBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 60; }
     function autoscroll(el, stick) { if (stick) el.scrollTop = el.scrollHeight; }
+    // Conversation feed is NEWEST-FIRST (Fred, 19/08): new entries are
+    // prepended so the latest exchange and the buttons stay visible without
+    // scrolling. Stick to the top unless the user scrolled down to read.
+    function prepend(el, node) {
+      const stick = el.scrollTop < 60;
+      el.insertBefore(node, el.firstChild);
+      if (stick) el.scrollTop = 0;
+    }
 
     function onGateDecision(d) {
       // Current activator, for the scoped "Chut" button (/api/stop needs a
@@ -597,7 +629,6 @@
       autoscroll(gateFeed, stick);
 
       // Conversation
-      const cstick = scrolledToBottom(convo);
       if (d.accepted) {
         addUserBubble(d.speaker || 'inconnu', d.text);
       } else {
@@ -608,13 +639,11 @@
         why.className = 'why';
         why.textContent = '— ' + d.reason;
         f.appendChild(why);
-        convo.appendChild(f);
+        prepend(convo, f);
       }
-      autoscroll(convo, cstick);
     }
 
     function addUserBubble(who, text) {
-      const stick = scrolledToBottom(convo);
       const b = document.createElement('div');
       b.className = 'bubble user';
       const chip = document.createElement('span');
@@ -622,14 +651,12 @@
       chip.textContent = who;
       b.appendChild(chip);
       b.append(text);
-      convo.appendChild(b);
+      prepend(convo, b);
       botBubble = null; // next bot text starts a fresh bubble
-      autoscroll(convo, stick);
     }
 
     function appendBotToken(text) {
       if (!text) return;
-      const stick = scrolledToBottom(convo);
       if (!botBubble) {
         if (!text.trim()) return; // don't open a bubble on pure whitespace
         botBubble = document.createElement('div');
@@ -639,12 +666,11 @@
         who.textContent = 'Merlin';
         botBubble.appendChild(who);
         botBubble.appendChild(document.createTextNode(''));
-        convo.appendChild(botBubble);
+        prepend(convo, botBubble); // above its user bubble: newest-first
       }
       const node = botBubble.lastChild;
       // LLM tokens carry their own spacing; just strip the leading space of a bubble
       node.textContent += node.textContent ? text : text.replace(/^\s+/, '');
-      autoscroll(convo, stick);
     }
 
     // ---- typed chat ----------------------------------------------------------
