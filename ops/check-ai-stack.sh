@@ -14,8 +14,11 @@ curl -sf --max-time 5 http://localhost:11434/api/version >/dev/null \
   && ok "Ollama :11434" || fail "Ollama :11434"
 # The LLM must stay pinned in memory (_preload_llm, keep_alive:-1 — cold start
 # fix du 2026-08-15) : un /api/ps vide = 6-7 s de rechargement au premier tour.
-curl -sf --max-time 5 http://localhost:11434/api/ps | grep -q "qwen" \
-  && ok "LLM épinglé (qwen)" || fail "LLM épinglé"
+# Tag EXACT (= LLM_MODEL de bot.py) : un grep "qwen" trop lâche répondait ok
+# quand seul le tag de base 262k était chargé (incident Hermes du 2026-08-21).
+PINNED_TAG="qwen3.6:35b-a3b-q4_K_M-ctx32k"
+curl -sf --max-time 5 http://localhost:11434/api/ps | grep -q "\"$PINNED_TAG\"" \
+  && ok "LLM épinglé ($PINNED_TAG)" || fail "LLM épinglé"
 curl -skf --max-time 5 https://localhost:7860/ >/dev/null \
   && ok "Bot :7860" || fail "Bot :7860"
 # Home Assistant (plan de contrôle Sonos — docs/SONOS.md). Vérifié seulement

@@ -1068,3 +1068,41 @@ posée : faut-il un jeu de phrases prédéfinies ?
   l'inscription s'ouvre même si l'envoi échoue, le statut est imprimé.
   Message ~1,1 k chars, sous le plafond Telegram (4 096). Testé réel :
   « sent », reçu sur le téléphone.
+
+## 2026-08-21 — Incident alertes Telegram : éviction du modèle épinglé par Hermes → Hermes retiré
+
+Symptôme : rafales de « ⚠️ Merlin en panne : LLM épinglé » / « ✅ rétabli »
+en Telegram (le monitor flappait). Chaîne causale mesurée :
+
+1. Home Assistant poussait CHAQUE changement d'état d'entité (Sonos Roam en
+   charge, interrupteurs…) vers le gateway Hermes (`~/.hermes`, :8642),
+   qui appelait Ollama avec le tag de BASE `qwen3.6:35b-a3b-q4_K_M`
+   (ctx 262 k, 28,5 Go) — pas le tag `-ctx32k` épinglé.
+2. Charger ce gros modèle évincait le modèle épinglé de Merlin (les deux ne
+   tiennent pas ensemble en RAM). Les appels Hermes ne passaient pas de
+   `keep_alive` → déchargement après 5 min → plus AUCUN qwen chargé.
+3. Le check monitor `api/ps | grep qwen` passait alors à FAIL → alerte ;
+   l'événement HA suivant rechargeait le modèle → « rétabli ». Flapping.
+   Effet de bord : Merlin repartait en cold start 6–7 s (le pin ne se
+   refait qu'au démarrage du bot).
+
+**Décision (demande Fred : « je n'utilise plus Hermes ») : Hermes retiré.**
+- Services arrêtés + LaunchAgents supprimés (`ai.hermes.gateway`,
+  `com.hermes.router`, `com.hermes.webui`) ; plists archivés dans
+  `~/hermes-retired-20260821/`. Ports 8642/8101 libres, vérifié.
+- Répertoires SUPPRIMÉS (choix Fred, « delete everything ») : `~/.hermes`
+  (2,7 Go — mémoires agent, kanban, sessions), `~/hermes-router`,
+  `~/Developer/hermes-tools`. Seuls les plists archivés subsistent.
+- Bot relancé (`kickstart`) : modèle `-ctx32k` ré-épinglé (expires 2318 =
+  keep_alive -1), stack 4/4 ok. Aucune dépendance côté merlin-voice :
+  la seule référence à :8642 dans `bot.py` est un exemple commenté.
+- Caduque : le « rôle futur = worker de fond » d'Hermes (décision du
+  12-13/08). Toute délégation future partira sur autre chose.
+- Reste à faire côté HA : l'automatisation qui pousse les événements vers
+  Hermes pointe désormais dans le vide (inoffensif, mais à nettoyer).
+
+**Monitor corrigé (même jour)** : le check « LLM épinglé » greppait `qwen`
+— il répondait « ok » quand seul le MAUVAIS modèle (tag de base) était
+chargé. Resserré sur le tag exact `"qwen3.6:35b-a3b-q4_K_M-ctx32k"`
+(= défaut `LLM_MODEL` de bot.py ; à changer en même temps si le modèle
+change). Vérifié : 4/4 ok avec le tag épinglé.

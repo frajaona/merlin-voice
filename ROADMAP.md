@@ -248,6 +248,16 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   pour être lisible en se déplaçant dans la pièce. Testé réel : « sent ».
   Préparation à l'inscription de la femme de Fred.
 
+- **2026-08-21** — **Hermes retiré** (gateway :8642, router :8101, webui) :
+  les événements HA le traversaient et chargeaient le qwen de BASE (262 k),
+  évinçant le modèle épinglé de Merlin → flapping du monitor (alertes
+  Telegram en rafale) + cold starts. Services arrêtés, LaunchAgents
+  supprimés (plists archivés `~/hermes-retired-20260821/`), bot relancé et
+  ré-épinglé, 4/4 ok. Incident détaillé dans `docs/DECISIONS.md`.
+  Monitor resserré dans la foulée : le check « LLM épinglé » greppe le tag
+  exact `-ctx32k` (l'ancien grep `qwen` disait ok avec le mauvais modèle).
+  À faire résiduel : nettoyer l'automatisation HA qui pousse vers :8642.
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
