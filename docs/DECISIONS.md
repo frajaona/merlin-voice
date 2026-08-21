@@ -1233,3 +1233,29 @@ du HA Yellow, jamais d'accès direct aux ampoules.
   7 cas). Vérifié en réel : statut (7 lumières allumées, luminosités
   cohérentes), allumer/éteindre « Suspension Dressing », remise à l'état
   initial.
+
+## 2026-08-21 — Incident soirée : rafale de faux rejets de Fred (musique + loin champ), le seuil 0.60 tient
+
+Session vocale 19:15–19:28, musique Sonos en cours dans la cuisine (volume
+12–22) pendant quasiment tout l'échange. ~15 tours de Fred rejetés à tort,
+tous mesurés dans `data/merlin.log` (grep `VoiceGate`) et `transcripts.db` :
+
+- **Sims des tours rejetés** (meilleur profil = fred ou « voix inconnue ») :
+  0.10, 0.17, 0.18, 0.19, 0.25, 0.30, 0.31, 0.31, 0.34, 0.36, 0.39, 0.40,
+  0.45, 0.56, 0.57. Plage propre de Fred : 0.72–0.89. La quasi-totalité
+  tombe DANS la plage mesurée de sa femme sur le même téléphone (0.08–0.54)
+  → **ne PAS baisser le seuil 0.60**, il n'existe aucun seuil qui accepte
+  ces tours sans accepter aussi un tiers. Confirme la décision du faux
+  rejet à 0.45 (même cause : loin champ + musique).
+- **Motif UX le plus coûteux** : l'éveil court « Salut Merlin ! » passe
+  (0.65–0.75, leniency tours courts) puis la COMMANDE complète qui suit est
+  rejetée (« pas l'activateur (fred) ») — Merlin salue puis ignore l'ordre,
+  Fred répète 2–3 fois. L'embedding du tour long est plus contaminé par la
+  musique que celui du tour court prononcé plus fort/plus près.
+- **Réponse (inchangée, maintenant urgente)** : top-up de diversité du
+  profil (`tools/voice_profile.py enroll fred`, 24 embeddings actuels,
+  consistency mean 0.85) **exécuté dans les conditions qui échouent :
+  cuisine, distance d'usage, MUSIQUE EN COURS à volume normal**. Lead :
+  l'`ENROLL_SCRIPT` (8 conditions) ne comporte pas de condition « musique en
+  fond » — la donnée de ce soir dit que c'est LA condition dominante
+  d'échec ; à ajouter au script si le top-up manuel ne suffit pas.
