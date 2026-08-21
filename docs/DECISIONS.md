@@ -989,3 +989,16 @@ contre l'ancre — coloration même pièce/micro).
   lancé la lecture ; pendant qu'une enceinte joue, exiger une
   vérification plus stricte (ou le mot d'éveil) pour les tours courts.
   À rouvrir si les fantômes persistent malgré le fix ×3.
+
+## 2026-08-21 — MusicKit : parqué (pas d'abonnement développeur pour l'instant)
+
+Fred ne souhaite pas (encore) payer le programme développeur Apple — la
+clé MusicKit l'exige, et il n'existe AUCUNE alternative viable pour la
+recherche de playlists catalogue (iTunes Search : pas d'entité playlist ;
+token web anonyme : plus extractable ; SMAPI : rejeté par principe —
+tout vérifié le 19/08). Le résolveur reste en place, dormant sans
+`data/musickit.json` (il se réveille tout seul si une clé arrive).
+Manque résiduel : les playlists ÉDITORIALES Apple à la voix — palliatif
+gratuit : les étoiler une fois dans l'app Sonos (favoris). Réouverture :
+Fred prend un compte développeur, ou l'usage réclame souvent des
+playlists catalogue à la voix.

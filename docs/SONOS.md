@@ -96,8 +96,10 @@ son du salon », « groupe la cuisine avec le salon » fonctionnent à la voix.
 > Music.app** (scrape AppleScript, cache quotidien
 > `data/musicapp-playlists.json` — reconnues, jouables en phase 3 ;
 > consentement Automation du bot en attente, voir DECISIONS 19/08) →
-> **catalogue Apple Music via MusicKit** (token développeur,
-> `data/musickit.json` — voir DECISIONS 19/08) → Spotify explicite.
+> **catalogue Apple Music via MusicKit** (PARQUÉ 21/08 : exige le
+> programme développeur payant, pas d'alternative viable — résolveur
+> dormant sans `data/musickit.json`, palliatif = étoiler en favori Sonos ;
+> voir DECISIONS 21/08) → Spotify explicite.
 > Artistes/albums NAS jouables en conteneurs. Limite connue : le listing
 > des pistes plafonne à ~1000 (recherche par titre = best effort).
 > Validé en vrai (« Joue Adele depuis le NAS », « la playlist Chill »).
