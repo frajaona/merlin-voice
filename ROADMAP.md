@@ -237,11 +237,23 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   Bot créé et configuré le 21/08 (@merlin_voice_groriri_bot, token +
   chat_id dans `data/notify.json`), test réel « sent », bot relancé.
 
+- **2026-08-21** — **Script d'inscription guidé** (`voice_profile.py enroll`
+  imprime `ENROLL_SCRIPT`) : 8 phrases françaises, une condition acoustique
+  par phrase (distance, voix douce, intonation, dos au téléphone, pièce
+  d'usage). Le gate étant indépendant du texte, le script vise la diversité
+  de conditions, pas les mots — pour éviter le profil mono-session (faux
+  rejet « marées », voir `docs/DECISIONS.md` 2026-08-14 et 2026-08-21).
+  À l'ouverture (neuf et top-up), le script est aussi poussé sur le
+  téléphone via `notify.send()` (Telegram, fallback iMessage, best-effort)
+  pour être lisible en se déplaçant dans la pièce. Testé réel : « sent ».
+  Préparation à l'inscription de la femme de Fred.
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
-   enroll <nom>`, puis la personne discute seule avec Merlin. Vérifier le
-   passage de micro (« Merlin, et pour moi… » en phrase complète).
+   enroll <nom>`, puis la personne suit le script imprimé, seule avec
+   Merlin. Vérifier le passage de micro (« Merlin, et pour moi… » en
+   phrase complète).
 2. **Exploiter transcripts.db comme jeu de test** : après ~1 semaine d'usage,
    rejouer les lignes `[filtré: …]` et les vraies transcriptions pour ajuster
    les seuils sur données réelles, enrichir `data/stt_vocab.txt` avec les mots

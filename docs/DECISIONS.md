@@ -1032,3 +1032,39 @@ envoi, jamais la bannière côté réception.
   backlog) devient plus simple — le bot Telegram existe désormais côté
   sortant, il ne manque que le long-polling + allowlist chat_id + slug
   explicite dans la réponse.
+
+## 2026-08-21 — Inscription guidée : script de conditions, pas de phrases « magiques »
+
+Préparation à l'inscription d'un second profil (femme de Fred). Question
+posée : faut-il un jeu de phrases prédéfinies ?
+
+- **Constat** : le gate est indépendant du texte (embeddings moyennés,
+  similarité cosinus) — le contenu des phrases n'apporte rien. Ce qui manque
+  à un profil neuf, c'est la diversité ACOUSTIQUE : distance, volume,
+  prosodie, pièce. Un script lu assis face au téléphone reproduirait le
+  profil mono-session qui a causé le faux rejet « marées » du 14/08
+  (énoncé réel 4 s scoré 0.37).
+- **Décision** : `voice_profile.py enroll` (neuf ET top-up) imprime
+  `ENROLL_SCRIPT` — 8 phrases françaises, chacune associée à une condition
+  (1 m voix normale, phrase longue, 2–3 m, voix douce, question montante,
+  ton d'ordre, pièce d'usage, en mouvement dos au téléphone). Rôle réel des
+  phrases : garantir que chaque énoncé passe les filtres d'inscription
+  (≥ 1,2 s, ≥ 3 mots — le bavardage libre produit des « Oui. » qui ne
+  comptent pas) et lever le « je dis quoi ? » d'un non-initié.
+- **Contraintes respectées par les phrases** : aucune ne contient
+  « chut »/« stop » (phrase d'arrêt) ; aucune ne déclenche d'action réelle
+  (pas de Sonos/musique) ; « Merlin » en tête des six premières, les deux
+  dernières comptent sur la fenêtre de suivi (note dans le script : redire
+  « Merlin » après ~10 s).
+- **Rappels opérationnels dans le script** : seul(e) dans la pièce (garde
+  anti-contamination sim < 0.30) ; ne pas viser la session parfaite —
+  l'adaptation par l'ancre et le top-up complètent en usage réel ; en cas
+  de faux rejets la première semaine : top-up, PAS de baisse de seuils
+  (préférence ferme : rater vaut mieux que se tromper).
+- **Script poussé sur le téléphone** (demande Fred, même jour) : à
+  l'ouverture de l'inscription (neuf et top-up), `voice_profile.py` envoie
+  le script via `notify.send()` — plus pratique à lire en se déplaçant
+  (conditions 3, 7, 8) qu'un terminal. Best-effort comme tout `notify` :
+  l'inscription s'ouvre même si l'envoi échoue, le statut est imprimé.
+  Message ~1,1 k chars, sous le plafond Telegram (4 096). Testé réel :
+  « sent », reçu sur le téléphone.
