@@ -276,11 +276,12 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
 
 ## À faire (par ordre de valeur estimée)
 
-1. **Top-up du profil de Fred en conditions cuisine + musique** (action
-   utilisateur, urgent depuis l'incident du 21/08 au soir — ~15 faux rejets
-   sims 0.10–0.57, musique Sonos en fond) : `tools/voice_profile.py enroll
-   fred`, script exécuté dans la cuisine, à distance d'usage, **musique en
-   cours à volume normal**. Voir `docs/DECISIONS.md` 2026-08-21.
+1. ~~Top-up du profil de Fred en conditions cuisine + musique~~ **fait 21/08
+   au soir** (10 énoncés, musique en cours). A révélé un bug : un top-up sur
+   profil au cap (`PROFILE_MAX` 24, cible absolue 32) ne se fermait jamais —
+   corrigé (compteur dans le marqueur + TTL 1 h), voir `docs/DECISIONS.md`
+   2026-08-21. **À vérifier à l'usage** : sims des prochaines sessions
+   cuisine+musique (grep VoiceGate).
 2. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
    enroll <nom>`, puis la personne suit le script imprimé, seule avec
    Merlin. Vérifier le passage de micro (« Merlin, et pour moi… » en

@@ -441,6 +441,65 @@ def test_polite_closer():
     print("ok: polite closers — activator closes, others ignored, answers pass")
 
 
+def test_topup_rolling_cap_and_stale_marker():
+    """Top-up on a full profile (incident 2026-08-21): the rolling PROFILE_MAX
+    cap keeps count at 24, so an absolute target (32) was never reached and
+    the marker stayed open — enrolling and answering near-any voice."""
+    import os
+    import time as _time
+
+    from voice_guard import PROFILE_MAX
+
+    clock = FakeClock()
+    fred = unit(1)
+    with tempfile.TemporaryDirectory() as tmp:
+        household = make_household(tmp)
+        household.finish_enrollment()
+        profile = household.get_or_create("fred")
+        for i in range(PROFILE_MAX):
+            profile.enroll(near(fred, 100 + i))
+        assert profile.count == PROFILE_MAX
+
+        # Top-up as voice_profile.py opens it: absolute target beyond the cap.
+        household.start_enrollment("fred", target=PROFILE_MAX + 8)
+        core = make_core(household, clock)
+        n = 0
+        while household.pending_name():
+            clock.t += 5
+            ok, why = core.evaluate(
+                "Merlin une phrase de top up assez longue", near(fred, 300 + n), 2.0)
+            assert ok and "top-up" in why, why
+            n += 1
+            assert n <= 8, "top-up must complete after 8 enrolled utterances"
+        assert n == 8 and profile.count == PROFILE_MAX
+
+        # Progress survives a restart mid top-up (counter lives in the marker).
+        household.start_enrollment("fred", target=PROFILE_MAX + 8)
+        clock.t += 5
+        ok, why = core.evaluate(
+            "Merlin une phrase de top up assez longue", near(fred, 400), 2.0)
+        assert ok and "top-up 1/8" in why, why
+        household2 = make_household(tmp)  # bot restart
+        core2 = make_core(household2, clock)
+        n = 1
+        while household2.pending_name():
+            clock.t += 5
+            ok, why = core2.evaluate(
+                "Merlin une phrase de top up assez longue", near(fred, 400 + n), 2.0)
+            assert ok, why
+            n += 1
+        assert n == 8, f"restart must not reset top-up progress (took {n})"
+
+        # A stale marker expires without enrolling anyone.
+        household.start_enrollment("fred", target=PROFILE_MAX + 8)
+        marker = Path(tmp) / "voices" / ".enrolling"
+        old = _time.time() - 4000
+        os.utime(marker, (old, old))
+        assert household.pending_name() is None
+        assert not marker.exists()
+    print("ok: top-up au cap (8 énoncés), reprise après restart, marqueur périmé")
+
+
 if __name__ == "__main__":
     test_hallucination_filters()
     test_owner_enrollment_flow()
@@ -451,4 +510,5 @@ if __name__ == "__main__":
     test_lift_hold_http()
     test_polite_closer()
     test_embedding_separation()
+    test_topup_rolling_cap_and_stale_marker()
     print("all voice_guard tests passed")

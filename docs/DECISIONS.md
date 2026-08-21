@@ -1259,3 +1259,36 @@ tous mesurés dans `data/merlin.log` (grep `VoiceGate`) et `transcripts.db` :
   l'`ENROLL_SCRIPT` (8 conditions) ne comporte pas de condition « musique en
   fond » — la donnée de ce soir dit que c'est LA condition dominante
   d'échec ; à ajouter au script si le top-up manuel ne suffit pas.
+
+## 2026-08-21 — Top-up de Fred fait (musique + cuisine) ; bug : un top-up au cap ne se fermait jamais
+
+Suite de l'incident du soir. Fred a exécuté le top-up dans la cuisine,
+musique en cours — 10 énoncés inscrits entre 19:33 et 19:36.
+
+- **Le top-up a bien atterri** : `fred.npz` réécrit, consistency
+  min 0.72→0.52, mean 0.85→0.75 — la queue basse (0.52–0.67) EST la
+  diversité musique/loin champ recherchée ; distribution saine, pas
+  d'aberrant (item « prune » non nécessaire ici).
+- **Bug découvert** : `voice_profile.py` ouvre un top-up avec une cible
+  ABSOLUE (`count+8` = 32) alors que le profil est plafonné en anneau à
+  `PROFILE_MAX` = 24 (`enroll()` évince le plus ancien). `profile.count`
+  reste à 24, la cible 32 est inatteignable → **le marqueur `.enrolling` ne
+  se ferme jamais**. Conséquence grave : marqueur ouvert = toute voix pas
+  franchement différente (sim ≥ 0.30 — la femme de Fred mesure jusqu'à
+  0.54) est inscrite dans le profil ET répondue comme l'inscrit. Le
+  marqueur est resté ouvert ~40 min (le mode privé « Merlin chut » de
+  19:36 a limité l'exposition). Fermé à la main (`cancel`).
+- **Correctifs (`voice_guard.py`)** :
+  1. **Progression de top-up = énoncés inscrits depuis l'ouverture**,
+     compteur persisté en 3ᵉ token du marqueur (`fred 32 3`) — survit à un
+     restart du bot, format rétro-compatible (les lecteurs prennent
+     token[0]/[1]). Complet quand compteur ≥ cible − PROFILE_MAX.
+     L'inscription fraîche (cible 8 ≤ cap) reste au comptage absolu.
+  2. **TTL du marqueur** (`ENROLL_PENDING_TTL` = 1 h) : un marqueur
+     abandonné expire au lieu de rester une porte ouverte. Chaque énoncé
+     inscrit réécrit le marqueur (mtime rafraîchi) — une session active
+     n'expire jamais.
+- Tests : `test_topup_rolling_cap_and_stale_marker` (complet en 8, reprise
+  après restart, expiration) dans `tools/test_voice_guard.py` — 10/10 ok.
+- Reste à vérifier à l'usage : le gain réel en conditions musique (les sims
+  des prochaines sessions cuisine, via grep VoiceGate).

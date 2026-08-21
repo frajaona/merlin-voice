@@ -162,6 +162,9 @@ QUESTION_SECS = float(os.getenv("MERLIN_QUESTION_SECS", "15"))
 ENROLL_TARGET = 8          # profile is complete after this many utterances
 ENROLL_MIN_SECS = 1.2      # only enroll utterances at least this long
 ENROLL_MIN_WORDS = 3
+ENROLL_PENDING_TTL = 3600  # a stale .enrolling marker expires — while open it
+                           # absorbs AND answers near-any voice (incident
+                           # 2026-08-21 : marqueur resté ouvert, cf DECISIONS)
 ADAPT_SIM = 0.75           # keep refining a profile on unmistakable matches
                            # (0.55 once let a same-room bystander in)
 PROFILE_MAX = 24           # rolling cap on stored embeddings per person
@@ -353,6 +356,13 @@ class HouseholdProfiles:
     def pending_name(self) -> str | None:
         # Re-read each time: `tools/voice_profile.py enroll` can run mid-session.
         if self._pending_path.exists():
+            # Expire a stale marker: while open it enrolls (and answers) any
+            # voice that isn't grossly different. Each enrolled utterance
+            # rewrites the marker, so an active script never expires.
+            if time.time() - self._pending_path.stat().st_mtime > ENROLL_PENDING_TTL:
+                self._pending_path.unlink(missing_ok=True)
+                logger.warning("enrollment marker expired (stale) — cleared")
+                return None
             name = self._pending_path.read_text(encoding="utf-8").split()
             return name[0] if name else None
         return None
@@ -364,6 +374,21 @@ class HouseholdProfiles:
             if len(parts) > 1 and parts[1].isdigit():
                 return int(parts[1])
         return ENROLL_TARGET
+
+    def bump_pending_enrolled(self) -> int:
+        """Increments the enrolled-count (3rd marker token) and returns it.
+
+        Persisted in the marker (not in memory) so a bot restart mid top-up
+        doesn't restart the count — with the rolling PROFILE_MAX cap, the
+        profile count alone can't measure top-up progress (it sticks at the
+        cap and the absolute target is never reached — incident 2026-08-21).
+        """
+        parts = self._pending_path.read_text(encoding="utf-8").split()
+        done = (int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0) + 1
+        self._pending_path.write_text(
+            " ".join(parts[:2] + [str(done)]), encoding="utf-8"
+        )
+        return done
 
     def start_enrollment(self, name: str, target: int | None = None):
         self._pending_path.parent.mkdir(parents=True, exist_ok=True)
@@ -737,8 +762,18 @@ class GateCore:
             suspicious = profile.count >= 2 and profile.similarity(embedding) < 0.30
             if not suspicious:
                 profile.enroll(embedding)
-                note = f", {profile.count}/{target}"
-                if profile.count >= target:
+                # Top-up beyond the rolling cap: profile.count sticks at
+                # PROFILE_MAX, so progress = utterances enrolled since open
+                # (3rd marker token), not the absolute count.
+                extra = max(0, target - PROFILE_MAX)
+                if extra:
+                    done_n = self.household.bump_pending_enrolled()
+                    note = f", top-up {min(done_n, extra)}/{extra}"
+                    done = done_n >= extra
+                else:
+                    note = f", {profile.count}/{target}"
+                    done = profile.count >= target
+                if done:
                     self.household.finish_enrollment()
                     logger.info(f"enrollment of '{pending}' complete — voice ACTIVE")
         self._bind(pending, embedding if duration >= VERIFY_MIN_SECS else None)

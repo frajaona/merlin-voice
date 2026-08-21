@@ -75,7 +75,12 @@ def status():
                 line += "  ⚠ poor match inside profile — consider reset"
         print(line)
     if PENDING_PATH.exists():
-        print(f"enrollment OPEN for '{PENDING_PATH.read_text().strip()}' — "
+        # Marker: "name [target [enrolled-so-far]]" (see voice_guard.py).
+        parts = PENDING_PATH.read_text().split()
+        detail = ""
+        if len(parts) > 1:
+            detail = f" (top-up, {parts[2] if len(parts) > 2 else 0} enrolled)"
+        print(f"enrollment OPEN for '{parts[0]}'{detail} — "
               "that person should chat with Merlin alone now")
 
 
