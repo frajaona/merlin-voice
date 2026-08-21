@@ -1111,3 +1111,79 @@ en Telegram (le monitor flappait). Chaîne causale mesurée :
 chargé. Resserré sur le tag exact `"qwen3.6:35b-a3b-q4_K_M-ctx32k"`
 (= défaut `LLM_MODEL` de bot.py ; à changer en même temps si le modèle
 change). Vérifié : 4/4 ok avec le tag épinglé.
+
+## 2026-08-21 — « Merlin plus puissant » : escalade cloud opt-in, pile Kyutai triée (analyse, rien d'implémenté)
+
+Besoin exprimé (Fred) : le modèle local ne suffit pas toujours —
+conversations plus « challengeantes », et construire des workflows en
+parlant à Merlin plutôt qu'en session Claude Code. Session d'analyse
+uniquement (aucun code) ; verdicts à ne pas re-dériver :
+
+**Architecture retenue : deux étages, cloud opt-in par tour.** qwen reste
+le cerveau vocal (calibré latence/outils, hors ligne, privé) ; la
+profondeur s'obtient par un outil d'escalade explicite, pas en remplaçant
+la boucle principale.
+
+- **Plugin `demande_a_claude` (à faire, priorité de ce fil)** : outil
+  appelé sur demande explicite (« demande à Claude », « réfléchis
+  vraiment ») → appel d'un modèle cloud en streaming, réponse parlée
+  phrase par phrase derrière une phrase-pont (comme les fillers plugins).
+  Seuls les tours explicitement escaladés quittent la machine (cohérent
+  avec la philosophie du gate) ; inactif hors activateur Fred / en mode
+  famille. Backend en env (`MERLIN_ESCALATE_*`) pour A/B sur usage réel :
+  Claude Opus 5 (meilleur partenaire de débat, ~5/25 $ par MTok — un
+  échange vocal = quelques centimes) ou Gemini 3.1 Pro (réutilisation
+  possible des credentials agy). Fallback zéro-credential : `agy -p` /
+  `codex exec` headless (perd le streaming, +qq s de démarrage CLI —
+  acceptable pour « réfléchis bien », mauvais pour le débat).
+- **Atelier : pas de worker `claude` ajouté** (décision Fred) — agy/codex
+  suffisent. Le levier qualité de l'atelier reste la spec (dialogue de
+  raffinement vocal avant dispatch = lead, pas décidé).
+- **Modèles speech-to-speech temps réel (GPT-Realtime-2 05/2026, Gemini
+  3.1 Flash Live 03/2026) : écartés comme boucle principale.** Ils
+  exigent un flux audio CONTINU vers le cloud : rupture frontale avec
+  voice_guard (famille et tiers streamés chez OpenAI/Google, gate et mode
+  privé décoratifs) + tarification à la minute. Lead parqué : « mode
+  débat » opt-in en pipeline parallèle — pipecat 1.3.0 embarque déjà
+  `services/openai/realtime` et `services/google/gemini_live` ; le gate
+  local authentifie et ouvre la session, le canal brut « Merlin stop »
+  (qui reste local) la tue. Exige sa propre décision privacy AVANT tout
+  code.
+
+**Pile Kyutai (creusée le même jour) — trois verdicts distincts :**
+
+- **Unmute : écarté.** C'est la couche d'orchestration (STT → LLM
+  OpenAI-compat → TTS en websockets) — rôle déjà tenu par Pipecat — et le
+  déploiement est CUDA/x86_64 uniquement, macOS explicitement non
+  supporté. Rien à adopter au-delà des idées. Ce sont les MODÈLES
+  dessous qui comptent (backends MLX dispo, code MIT/Apache, poids STT
+  CC-BY 4.0).
+- **Pocket TTS (01/2026, 100 M params) : candidat n°1 de l'audition
+  TTS**, passe devant Chatterbox dans le banc. Temps réel sur CPU (donc
+  SOULAGE la contention GPU au lieu de l'aggraver), français, clonage de
+  voix (une voix propre à Merlin). Test cheap : RTF CPU + oreille sur le
+  français vs Kokoro ; Kokoro reste le fallback derrière une env var.
+- **Kyutai STT (`stt-1b-en_fr`, delayed streams modeling) : stratégique
+  mais BLOQUÉ derrière l'instrumentation TTFT.** Gains : transcription en
+  continu avec 0,5 s de délai (le LLM part ~0,5 s après le dernier mot,
+  contre silence-Silero puis Whisper batch aujourd'hui), VAD sémantique
+  (fin de tour prédite, pas devinée à l'énergie — moins de coupures sur
+  pause mi-phrase), timestamps mot à mot (utile au dataset de tuning).
+  Risques : un 1B qui transcrit EN CONTINU sur le même GPU que le qwen
+  épinglé = le scénario exact de la génération à 24 s du 19/08 (jamais
+  instrumenté) ; tension avec l'item « gating de Whisper hors attention »
+  (privacy/compute vs always-on — le VAD sémantique peut réconcilier, à
+  trancher) ; intégration = service Pipecat custom à écrire, miroir de
+  `WhisperSTTServiceMLX` (pas de service Kyutai local dans pipecat
+  1.3.0 ; `gradium` = le cloud commercial de Kyutai, écarté : l'audio
+  quitterait la machine). Les profils voix (CAM++) sont indépendants du
+  STT, non touchés.
+- **Unification du moteur d'éveil : lead séparé, PAS dans la migration
+  STT.** Un STT streaming pourrait absorber éveil + stop + transcription
+  (le zipformer n'existe que parce que Whisper ne streame pas), mais le
+  canal brut est calibré et porteur (stop ~20 ms) — une seule bascule à
+  la fois.
+
+**Séquence décidée** : `demande_a_claude` → audition Pocket TTS →
+instrumentation TTFT + jeu de test transcripts.db (~20 énoncés) → banc
+Kyutai STT. Chaque étape shippable et abandonnable indépendamment.

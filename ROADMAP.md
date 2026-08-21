@@ -267,33 +267,41 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
    enroll <nom>`, puis la personne suit le script imprimé, seule avec
    Merlin. Vérifier le passage de micro (« Merlin, et pour moi… » en
    phrase complète).
-2. **Exploiter transcripts.db comme jeu de test** : après ~1 semaine d'usage,
+2. **Plugin `demande_a_claude` (escalade cloud opt-in)** : outil appelé sur
+   demande explicite (« demande à Claude », « réfléchis vraiment ») → modèle
+   cloud en streaming, réponse parlée phrase par phrase derrière une
+   phrase-pont. Backend en env `MERLIN_ESCALATE_*` (Claude Opus 5 ou Gemini
+   3.1 Pro, à A/B sur usage réel). Seuls les tours escaladés quittent la
+   machine ; inactif hors activateur Fred / en mode famille. Voir
+   `docs/DECISIONS.md` 2026-08-21 (« Merlin plus puissant »).
+3. **Exploiter transcripts.db comme jeu de test** : après ~1 semaine d'usage,
    rejouer les lignes `[filtré: …]` et les vraies transcriptions pour ajuster
    les seuils sur données réelles, enrichir `data/stt_vocab.txt` avec les mots
    mal reconnus, et comparer des variantes Whisper (fine-tunes français).
-3. **`voice_profile.py prune`** : retirer les embeddings aberrants d'un profil
+4. **`voice_profile.py prune`** : retirer les embeddings aberrants d'un profil
    (celui à consistance min ~0.47 chez Fred est un candidat).
-4. **Inscription par commande vocale** : « Merlin, apprends la voix de Camille »
+5. **Inscription par commande vocale** : « Merlin, apprends la voix de Camille »
    → appelle un plugin qui ouvre l'inscription (aujourd'hui : CLI seulement).
-5. **Gating de Whisper hors attention** (privacy + compute) : ne transcrire que
+6. **Gating de Whisper hors attention** (privacy + compute) : ne transcrire que
    si l'attention est ouverte ou si le moteur d'éveil vient de tirer. À peser :
-   on perdrait la collecte de données STT hors attention.
-6. **Dashboard riche v2 (mi-terme)** : le dashboard vanilla du 17/08 reste le
+   on perdrait la collecte de données STT hors attention. (Tension notée avec
+   un éventuel Kyutai STT always-on — voir `docs/DECISIONS.md` 2026-08-21.)
+7. **Dashboard riche v2 (mi-terme)** : le dashboard vanilla du 17/08 reste le
    client du quotidien ; une app plus ambitieuse (React ou autre, avec build)
    vivra **à côté** (ex. montée sur `/app`), en réutilisant le même contrat :
    token Bearer, REST `/api/workshop*`, messages RTVI du data channel (dont
    `server-message`/`gate-decision`). Idées : historique `transcripts.db`,
    stats du gate par locuteur, replay des tours filtrés, gestion des profils.
-7. **Approbation par réponse Telegram** (entrant) : seulement si l'usage des
+8. **Approbation par réponse Telegram** (entrant) : seulement si l'usage des
    notifications sortantes le justifie. Le bot Telegram existe côté sortant
    depuis le 21/08 (`notify.py`) — il manque le long-polling `getUpdates`,
    l'allowlist chat_id et le slug explicite dans la réponse (jamais un
    « oui » nu). L'option chat.db iMessage (Full Disk Access, schéma fragile)
    est abandonnée. Voir `docs/DECISIONS.md` 2026-08-16 et 2026-08-21.
-8. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
+9. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
    données synthétiques françaises) si le zipformer montre des faiblesses en
    conditions bruyantes.
-9. **Sonos multiroom** : plan complet en 4 phases dans **`docs/SONOS.md`**
+10. **Sonos multiroom** : plan complet en 4 phases dans **`docs/SONOS.md`**
    (architecture arrêtée le 18/08, voir `docs/DECISIONS.md`). Résumé : HA
    Yellow = plan de contrôle (REST), lecture toujours native Sonos (liens de
    partage), résolveurs minces (Music.app AppleScript pour Apple Music perso,
@@ -301,6 +309,13 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
    Music.app→AirPlay 2 seulement pour les playlists perso. La phase 1 crée le
    client HA réutilisable par l'outil `home_assistant` (lumières/volets, item
    de la revue du 13/08).
+11. **« Mode débat » speech-to-speech (lead parqué)** : session opt-in sur un
+    modèle audio-natif cloud (GPT-Realtime-2 ou Gemini Live — pipecat 1.3.0
+    embarque les deux services) en pipeline parallèle : le gate local ouvre
+    la session, « Merlin stop » (canal brut, local) la tue. Écarté comme
+    boucle principale (audio continu vers le cloud = rupture voice_guard).
+    Exige sa propre décision privacy dans `docs/DECISIONS.md` avant tout
+    code. Voir `docs/DECISIONS.md` 2026-08-21.
 
 ## À faire — reliquat de la revue du 13/08 (« The Merlin Review »)
 
@@ -342,8 +357,9 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 - **Outil `home_assistant`** (lumières/volets via HA Yellow REST/WebSocket) —
   l'upgrade quotidien le plus visible ; le prompt n'en parle plus, l'outil
   rendrait la promesse réelle.
-- **`delegate()` → Hermes** : tâches longues hors chemin chaud, résultat en
-  follow-up parlé ou briefing matinal.
+- **`delegate()`** (ex-« → Hermes », retiré le 21/08) : tâches longues hors
+  chemin chaud via un worker headless (agy/codex, comme l'atelier), résultat
+  en follow-up parlé ou briefing matinal.
 - **Raisonnement à la demande** : outil qui relance le même modèle avec
   `reasoning_effort` élevé (4–5 s, annoncé par une phrase-pont).
 
@@ -371,11 +387,18 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   (piste caméra), qwen3.6-nvfp4 (retest prochaine release Ollama). À
   surveiller : un MoE de la génération qwen3.8.
 - **STT** : jeu de test personnel de ~20 énoncés depuis transcripts.db, puis
-  Parakeet v3 (parakeet-mlx) ; Kyutai STT (streaming fr) = upgrade stratégique
-  (barge-in instantané), à faire avec son TTS.
-- **TTS** : audition Chatterbox Multilingual v3 (clonage, MIT — vérifier le
-  real-time factor sur MPS) ; Kyutai TTS si Kyutai STT ; Kokoro reste le
-  fallback derrière une env var.
+  Parakeet v3 (parakeet-mlx) ; **Kyutai STT (`stt-1b-en_fr`, MLX) = upgrade
+  stratégique** (transcription streaming 0,5 s de délai, VAD sémantique,
+  timestamps mots) mais **bloqué derrière l'instrumentation TTFT** (un 1B
+  qui transcrit en continu sur le GPU du qwen épinglé = le scénario des
+  24 s du 19/08) ; service Pipecat custom à écrire ; Unmute écarté
+  (orchestration = Pipecat, CUDA-only) ; unification éveil/STT = lead
+  séparé, pas dans la même bascule. Voir `docs/DECISIONS.md` 2026-08-21.
+- **TTS** : audition **Kyutai Pocket TTS d'abord** (100 M params, temps réel
+  sur CPU — soulage le GPU —, français, clonage : une voix propre à Merlin ;
+  voir `docs/DECISIONS.md` 2026-08-21), puis Chatterbox Multilingual v3
+  (clonage, MIT — vérifier le real-time factor sur MPS) ; Kyutai TTS 1.6B si
+  Kyutai STT ; Kokoro reste le fallback derrière une env var.
 
 ## Plafond connu
 
