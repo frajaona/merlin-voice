@@ -1002,3 +1002,33 @@ Manque résiduel : les playlists ÉDITORIALES Apple à la voix — palliatif
 gratuit : les étoiler une fois dans l'app Sonos (favoris). Réouverture :
 Fred prend un compte développeur, ou l'usage réclame souvent des
 playlists catalogue à la voix.
+
+## 2026-08-21 — Notifications : Telegram prioritaire (iMessage vers soi-même = silencieux)
+
+Incident : les alertes du monitor et de l'atelier arrivaient bien dans
+Messages mais SANS notification sur l'iPhone. Cause : iOS supprime la
+bannière pour les messages envoyés depuis son propre Apple ID vers
+soi-même (traités comme des messages synchronisés depuis un autre
+appareil) — comportement système, pas un bug de `notify.py`. C'est un
+angle mort de la validation du 16/08 : on avait vérifié « sent » côté
+envoi, jamais la bannière côté réception.
+
+- **Telegram Bot API retenu comme canal prioritaire** (déjà documentée le
+  16/08 comme alternative robuste) : long-polling côté entrant futur, pas
+  de port ouvert, notifications normales. Coût assumé : un serveur tiers
+  (Telegram) voit le contenu des alertes — acceptable, ce sont des états
+  de santé du stack et des cycles d'atelier, jamais de transcription.
+- **iMessage conservé en fallback** dans `notify.send()` : si Telegram
+  est absent de la config OU échoue (réseau), on retente iMessage. Même
+  contrat best-effort ("sent"/"disabled"/"failed", ne lève jamais,
+  timeout 15 s par canal). Implémentation stdlib (`urllib`), zéro
+  dépendance ajoutée.
+- **Config** : `data/notify.json` `{"telegram": {"token", "chat_id"}}`
+  (git-ignoré comme le reste de `data/`), env
+  `MERLIN_NOTIFY_TELEGRAM_TOKEN`/`MERLIN_NOTIFY_TELEGRAM_CHAT` priment.
+  Helper one-shot `venv/bin/python notify.py chat-id` (getUpdates) pour
+  découvrir le chat_id après avoir écrit au bot.
+- **Lead réouvert à moindre coût** : l'approbation entrante (item 7 du
+  backlog) devient plus simple — le bot Telegram existe désormais côté
+  sortant, il ne manque que le long-polling + allowlist chat_id + slug
+  explicite dans la réponse.

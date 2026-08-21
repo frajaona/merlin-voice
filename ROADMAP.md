@@ -224,6 +224,19 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   gating conscient de la musique (vérification stricte des tours courts
   pendant qu'une enceinte joue) si les fantômes persistent.
 
+- **2026-08-21** — **Notifications : Telegram prioritaire, iMessage en
+  secours** (`notify.py`). Cause du changement : les iMessages envoyés
+  depuis son propre Apple ID vers soi-même arrivent sans bannière iOS
+  (messages « synchronisés ») — les alertes du monitor étaient visibles
+  mais silencieuses. `notify.send()` = Telegram (Bot API, urllib stdlib,
+  timeout 15 s, best-effort) puis fallback iMessage ; config
+  `data/notify.json {"telegram": {"token", "chat_id"}}` ou env
+  `MERLIN_NOTIFY_TELEGRAM_TOKEN/CHAT` ; helper `notify.py chat-id`
+  (découverte du chat_id via getUpdates). Appelants migrés : `workshop.py`,
+  `ops/check-ai-stack.sh`. Tests : `tools/test_notify.py` (10 cas).
+  Bot créé et configuré le 21/08 (@merlin_voice_groriri_bot, token +
+  chat_id dans `data/notify.json`), test réel « sent », bot relancé.
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
@@ -246,11 +259,12 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
    token Bearer, REST `/api/workshop*`, messages RTVI du data channel (dont
    `server-message`/`gate-decision`). Idées : historique `transcripts.db`,
    stats du gate par locuteur, replay des tours filtrés, gestion des profils.
-7. **Approbation par réponse iMessage** (entrant) : seulement si l'usage des
-   notifications sortantes le justifie — polling de `chat.db` (Full Disk
-   Access, schéma fragile) avec vérification du handle expéditeur + slug
-   explicite dans la réponse ; alternative robuste : bot Telegram
-   (long-polling, boutons). Voir `docs/DECISIONS.md` 2026-08-16.
+7. **Approbation par réponse Telegram** (entrant) : seulement si l'usage des
+   notifications sortantes le justifie. Le bot Telegram existe côté sortant
+   depuis le 21/08 (`notify.py`) — il manque le long-polling `getUpdates`,
+   l'allowlist chat_id et le slug explicite dans la réponse (jamais un
+   « oui » nu). L'option chat.db iMessage (Full Disk Access, schéma fragile)
+   est abandonnée. Voir `docs/DECISIONS.md` 2026-08-16 et 2026-08-21.
 8. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
    données synthétiques françaises) si le zipformer montre des faiblesses en
    conditions bruyantes.

@@ -44,9 +44,9 @@ def log(msg: str):
 
 
 def notify_user(msg: str):
-    status = notify.send_imessage(msg)
+    status = notify.send(msg)
     if status != "disabled":
-        log(f"notify: iMessage {status}")
+        log(f"notify: {status}")
 
 
 def load_requests() -> list:
