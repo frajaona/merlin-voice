@@ -1187,3 +1187,49 @@ la boucle principale.
 **Séquence décidée** : `demande_a_claude` → audition Pocket TTS →
 instrumentation TTFT + jeu de test transcripts.db (~20 énoncés) → banc
 Kyutai STT. Chaque étape shippable et abandonnable indépendamment.
+
+## 2026-08-21 — Outil `home_assistant` : lumières + scènes, périmètre calé sur les entités réelles
+
+Item de la revue du 13/08 (« l'upgrade quotidien le plus visible »).
+Plugin `plugins/home_assistant.py`, même plan de contrôle que Sonos : REST
+du HA Yellow, jamais d'accès direct aux ampoules.
+
+- **Périmètre = inventaire réel de HA, pas la promesse « lumières/volets ».**
+  Relevé du 21/08 : 22 entités `light` (Hue, dont les groupes de pièce
+  Cuisine/Chambre/Dressing/Entrée), 17 `scene`, **zéro `cover`, zéro
+  `climate`**. Les 38 `switch` sont quasi tous du bruit Sonos
+  (crossfade/loudness/TV autoplay) → domaine exclu volontairement. Volets et
+  thermostat : à ajouter le jour où les entités existeront, pas avant.
+- **Client HA générique extrait dans `plugins/_ha_common.py`** (URL/token,
+  `ha_request`, `norm`, `friendly`) — c'était le « client réutilisable »
+  promis par la phase 1 de `docs/SONOS.md`. `_sonos_common.py` les
+  ré-importe et ré-exporte : appelants et tests (`common.ha_request`
+  monkeypatché) inchangés, suites sonos_controle/sonos_musique vertes.
+- **Même gate que Sonos (préférence Fred : ne pas agir > agir de travers)** :
+  match franc = nom exact, mêmes mots dans un autre ordre (« lecture
+  dressing » → scène « Dressing Lecture »), sous-chaîne unique, ou unique
+  voisin difflib (cutoff 0.75). Plusieurs candidats → aucune action, on
+  renvoie la liste. Vérifié en réel que le gate dépend de l'inventaire
+  joignable : « suspension » est ambigu dans les tests (2 candidates) mais
+  franc dans la maison actuelle (les autres suspensions sont
+  `unavailable`) — comportement voulu.
+- **Exclusions du pool** : entités `unavailable` (interrupteur mural coupé)
+  et les LED d'appareil (`light.home_assistant_voice_*`) — on ne propose
+  jamais à la voix une lumière injoignable ou technique.
+- **« Tout »** (`tout/toutes les lumières/partout…`) accepté pour
+  allumer/éteindre uniquement — un seul appel de service avec la liste
+  d'entités. Pas de « tout » pour la luminosité ni les scènes.
+- **Luminosité** : échelle parlée 0–100 (`brightness_pct` côté HA,
+  `brightness` 0–255 lu en retour) ; « plus »/« moins » = ±20 déterministe
+  (pendant du ±10 volume Sonos) ; cible 0 → `turn_off`. Les lumières
+  on/off simples n'exposent pas `brightness` → champ omis du statut (pas de
+  faux « 0 % » lu à voix haute).
+- **Un seul `GET /api/states` par invocation** (pools lumières + scènes +
+  états) — pas de cache : l'appel LAN est court et l'état des lumières
+  change tout le temps, contrairement aux entités Sonos (cache 10 min).
+- **Prompt système inchangé** : comme pour Sonos, la description du schéma
+  suffit au routage de l'outil.
+- Tests offline : `tools/test_home_assistant.py` (fake HA enregistreur,
+  7 cas). Vérifié en réel : statut (7 lumières allumées, luminosités
+  cohérentes), allumer/éteindre « Suspension Dressing », remise à l'état
+  initial.

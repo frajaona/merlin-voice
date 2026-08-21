@@ -261,6 +261,19 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   abonnement mort avec lui) ; le token longue durée « hermes » a été
   révoqué (seul « Merlin » subsiste), stack 4/4 ok après révocation.
 
+- **2026-08-21** — **Outil `home_assistant`** (item de la revue du 13/08) :
+  contrôle de la maison à la voix via le HA Yellow (REST). Périmètre = ce
+  que HA expose réellement : lumières (`light`, dont les groupes de pièce
+  Hue Cuisine/Chambre/Dressing/Entrée) et scènes d'éclairage (`scene`) —
+  **pas de volets ni de thermostat dans HA à ce jour**, à étendre quand les
+  entités existeront. Actions : allumer/éteindre (une lumière ou « tout »),
+  luminosité (absolue, ±N, plus/moins = ±20), scène, statut. Même gate que
+  Sonos : ambiguïté → on n'agit pas, on renvoie les candidats. Le client HA
+  générique a été extrait de `_sonos_common.py` vers `plugins/_ha_common.py`
+  (la « phase 1 » de `docs/SONOS.md` tenait sa promesse). Tests offline :
+  `tools/test_home_assistant.py` (7 cas, fake HA) ; vérifié en réel
+  (statut + allumer/éteindre Suspension Dressing). `docs/DECISIONS.md`.
+
 ## À faire (par ordre de valeur estimée)
 
 1. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
@@ -354,9 +367,9 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   démarrage de session. Ensuite seulement : rappel par embeddings (plan B,
   `nomic-embed-text` + table keyée sur turns.id) ; mem0 uniquement si A+B
   plafonnent.
-- **Outil `home_assistant`** (lumières/volets via HA Yellow REST/WebSocket) —
-  l'upgrade quotidien le plus visible ; le prompt n'en parle plus, l'outil
-  rendrait la promesse réelle.
+- ~~Outil `home_assistant`~~ **fait 21/08** (lumières + scènes via HA Yellow
+  REST ; pas de volets — aucune entité `cover` dans HA, à étendre le jour où
+  il y en aura). Voir « Fait » et `docs/DECISIONS.md` 2026-08-21.
 - **`delegate()`** (ex-« → Hermes », retiré le 21/08) : tâches longues hors
   chemin chaud via un worker headless (agy/codex, comme l'atelier), résultat
   en follow-up parlé ou briefing matinal.
