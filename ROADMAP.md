@@ -335,6 +335,19 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
     boucle principale (audio continu vers le cloud = rupture voice_guard).
     Exige sa propre décision privacy dans `docs/DECISIONS.md` avant tout
     code. Voir `docs/DECISIONS.md` 2026-08-21.
+13. **Micro dédié cuisine (lead parqué, conditionné aux données)** : ne
+    décider qu'après avoir mesuré l'effet du top-up du 21/08 sur les sims
+    en conditions cuisine+musique (grep VoiceGate). Si les sims restent
+    sous/collées au seuil 0.60 : un micro FIXE aide doublement (SNR loin
+    champ + canal acoustique constant → profil stable), mais aucun AEC ne
+    soustraira la musique Sonos (source externe, pas de signal de
+    référence) et le plafond « parole simultanée » demeure. Candidat déjà
+    possédé : le **HA Voice Preview Edition** (`home_assistant_voice_098c6a`
+    dans HA, débranché à ce jour — front-end XMOS loin champ). Intégration
+    non triviale : aujourd'hui il parlerait à l'Assist de HA (servi par les
+    `com.wyoming.*`) en CONTOURNANT Merlin — il faudrait un ingest audio
+    Wyoming/satellite dans bot.py pour que voice_guard garde l'audio brut.
+    Nouveau micro = nouveau canal → top-up du profil sur ce micro requis.
 
 ## À faire — reliquat de la revue du 13/08 (« The Merlin Review »)
 
