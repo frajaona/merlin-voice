@@ -256,7 +256,10 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   ré-épinglé, 4/4 ok. Incident détaillé dans `docs/DECISIONS.md`.
   Monitor resserré dans la foulée : le check « LLM épinglé » greppe le tag
   exact `-ctx32k` (l'ancien grep `qwen` disait ok avec le mauvais modèle).
-  À faire résiduel : nettoyer l'automatisation HA qui pousse vers :8642.
+  Côté HA : rien à nettoyer dans la config (aucune automatisation ni
+  rest_command vers :8642 — c'était Hermes qui s'abonnait au websocket HA,
+  abonnement mort avec lui) ; le token longue durée « hermes » a été
+  révoqué (seul « Merlin » subsiste), stack 4/4 ok après révocation.
 
 ## À faire (par ordre de valeur estimée)
 

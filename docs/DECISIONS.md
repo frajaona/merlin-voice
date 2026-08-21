@@ -1098,8 +1098,13 @@ en Telegram (le monitor flappait). Chaîne causale mesurée :
   la seule référence à :8642 dans `bot.py` est un exemple commenté.
 - Caduque : le « rôle futur = worker de fond » d'Hermes (décision du
   12-13/08). Toute délégation future partira sur autre chose.
-- Reste à faire côté HA : l'automatisation qui pousse les événements vers
-  Hermes pointe désormais dans le vide (inoffensif, mais à nettoyer).
+- Côté HA (vérifié le même jour via l'API REST + websocket) : AUCUNE
+  automatisation ni rest_command ne poussait vers :8642 — le trafic
+  d'événements était un abonnement websocket ouvert PAR Hermes (sens
+  inverse de l'hypothèse initiale), mort avec lui. Seule trace restante :
+  le token longue durée « hermes », révoqué (`auth/delete_refresh_token`).
+  Tokens restants : « Merlin » (celui de `data/ha-token`) + sessions
+  navigateur/mobile non nommées, intactes. Stack 4/4 ok après révocation.
 
 **Monitor corrigé (même jour)** : le check « LLM épinglé » greppait `qwen`
 — il répondait « ok » quand seul le MAUVAIS modèle (tag de base) était
