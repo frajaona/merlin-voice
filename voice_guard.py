@@ -167,6 +167,10 @@ ENROLL_PENDING_TTL = 3600  # a stale .enrolling marker expires — while open it
                            # 2026-08-21 : marqueur resté ouvert, cf DECISIONS)
 ADAPT_SIM = 0.75           # keep refining a profile on unmistakable matches
                            # (0.55 once let a same-room bystander in)
+ADAPT_MARGIN = 0.10        # ...and only if no OTHER enrolled profile scores
+                           # almost as high — an ambiguous voice must never be
+                           # absorbed (runaway du 2026-08-22 : profil pollué →
+                           # absorbe la famille → encore plus poreux)
 PROFILE_MAX = 24           # rolling cap on stored embeddings per person
 VERIFY_MIN_SECS = 1.0      # embeddings of shorter clips are too unstable to
                            # judge (a real "Merlin ?" scored 0.22 vs its owner)
@@ -415,6 +419,13 @@ class HouseholdProfiles:
         best = max(candidates, key=lambda p: p.similarity(embedding))
         return best.name, best.similarity(embedding)
 
+    def second_best(self, exclude: str, embedding) -> float | None:
+        """Best similarity among the OTHER enrolled profiles (None if alone)."""
+        others = [p for n, p in self.people.items() if n != exclude and p.count > 0]
+        if not others or embedding is None:
+            return None
+        return max(p.similarity(embedding) for p in others)
+
 
 # ---------------------------------------------------------------------------
 # Gate logic (pure — no pipecat dependency, directly unit-testable)
@@ -524,9 +535,32 @@ class GateCore:
         if len(self._anchor) > ANCHOR_MAX:
             self._anchor.pop(0)
 
-    def _adapt(self, name: str | None, sim, embedding):
-        if name and sim is not None and sim >= ADAPT_SIM:
-            self.household.people[name].enroll(embedding)
+    def _adapt(self, name: str | None, sim, embedding, floor: float = ADAPT_SIM):
+        """Auto-enrichissement du profil — uniquement sans équivoque.
+
+        Trois gardes (incident 2026-08-22, boucle d'emballement : profil
+        pollué → absorbe une voix étrangère ≥ ADAPT_SIM → plus poreux) :
+        pas d'adaptation pendant une inscription ouverte (les voix s'y
+        mélangent par construction), pas d'adaptation si un AUTRE profil
+        score presque autant (voix ambiguë), et chaque adaptation est
+        journalisée pour rester visible dans le log.
+        """
+        if not (name and sim is not None and sim >= floor):
+            return
+        if self.household.pending_name() is not None:
+            return
+        second = self.household.second_best(name, embedding)
+        if second is not None and sim - second < ADAPT_MARGIN:
+            logger.info(
+                f"adaptation refusée ({name}): voix ambiguë "
+                f"(sim={sim:.2f}, autre profil à {second:.2f})"
+            )
+            return
+        self.household.people[name].enroll(embedding)
+        logger.info(
+            f"profil {name} adapté (sim={sim:.2f}, "
+            f"{self.household.people[name].count} embeddings)"
+        )
 
     # -- privacy hold -------------------------------------------------------
 
@@ -715,10 +749,9 @@ class GateCore:
                     # and the activator already passed the wake bar). This is
                     # how the profile learns far-from-phone and soft speech.
                     strong_anchor = anchor_sim is not None and anchor_sim >= 0.80
-                    if name == self.activator and sim is not None and (
-                        sim >= ADAPT_SIM or (strong_anchor and sim >= 0.45)
-                    ):
-                        self.household.people[name].enroll(embedding)
+                    if name == self.activator:
+                        self._adapt(name, sim, embedding,
+                                    floor=0.45 if strong_anchor else ADAPT_SIM)
                 elif known:
                     self._adapt(name, sim, embedding)
                 self._touch_attention()

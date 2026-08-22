@@ -500,6 +500,43 @@ def test_topup_rolling_cap_and_stale_marker():
     print("ok: top-up au cap (8 énoncés), reprise après restart, marqueur périmé")
 
 
+def test_adaptation_guards():
+    """Runaway 2026-08-22: a polluted profile absorbed family voices at
+    >= ADAPT_SIM, getting more porous with each one. Adaptation must refuse
+    ambiguous voices (another profile almost as close) and freeze entirely
+    while an enrollment marker is open (voices mix there by construction)."""
+    clock = FakeClock()
+    fred, wife = unit(1), unit(2)
+    with tempfile.TemporaryDirectory() as tmp:
+        household = make_household(tmp)
+        household.finish_enrollment()
+        enroll_voice(household, "fred", fred, 100)
+        enroll_voice(household, "camille", wife, 200)
+        core = make_core(household, clock)
+        n0 = household.people["fred"].count
+
+        # Unambiguous fred voice, above the floor: adapts.
+        core._adapt("fred", 0.85, near(fred, 300))
+        assert household.people["fred"].count == n0 + 1
+
+        # A voice much closer to camille than the claimed sim: refused.
+        core._adapt("fred", 0.85, near(wife, 301))
+        assert household.people["fred"].count == n0 + 1
+
+        # Below the floor: refused.
+        core._adapt("fred", 0.60, near(fred, 302))
+        assert household.people["fred"].count == n0 + 1
+
+        # Enrollment open: frozen even on a perfect match; thaws on close.
+        household.start_enrollment("marcel")
+        core._adapt("fred", 0.90, near(fred, 303))
+        assert household.people["fred"].count == n0 + 1
+        household.finish_enrollment()
+        core._adapt("fred", 0.90, near(fred, 303))
+        assert household.people["fred"].count == n0 + 2
+    print("ok: adaptation gardée — marge inter-profils, gel pendant inscription")
+
+
 if __name__ == "__main__":
     test_hallucination_filters()
     test_owner_enrollment_flow()
@@ -511,4 +548,5 @@ if __name__ == "__main__":
     test_polite_closer()
     test_embedding_separation()
     test_topup_rolling_cap_and_stale_marker()
+    test_adaptation_guards()
     print("all voice_guard tests passed")

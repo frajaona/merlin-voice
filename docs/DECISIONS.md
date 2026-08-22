@@ -1292,3 +1292,43 @@ musique en cours — 10 énoncés inscrits entre 19:33 et 19:36.
   après restart, expiration) dans `tools/test_voice_guard.py` — 10/10 ok.
 - Reste à vérifier à l'usage : le gain réel en conditions musique (les sims
   des prochaines sessions cuisine, via grep VoiceGate).
+
+## 2026-08-22 — Incident majeur : le top-up « musique » a rendu le profil poreux → emballement de l'adaptation → profil de Fred réinitialisé
+
+**Le verdict d'hier est inversé : un top-up en conditions bruyantes est un
+poison, pas un remède.** Chronologie mesurée (`data/merlin.log`) :
+
+1. Top-up du 21/08 au soir (10 embeddings musique/loin champ) → le profil
+   de Fred devient poreux : la séparation mesurée le 13/08 (femme :
+   0.08–0.54 sur le même téléphone) s'effondre.
+2. Matinée du 22/08 : la famille est acceptée comme « fred » toute la
+   matinée (sims 0.61–0.86 ; confirmé par Fred : au moins sa femme et son
+   fils). **Mauvaises acceptations = l'échec que le gate doit préférer
+   éviter.** Chaque accept ≥ ADAPT_SIM (0.75) a ADAPTÉ l'embedding
+   étranger dans le profil (~une dizaine dans la journée), le cap anneau
+   (PROFILE_MAX 24) évinçant à chaque fois un embedding d'origine →
+   boucle d'emballement (plus poreux → absorbe plus).
+3. Inscription de Camille bloquée à 3/8 : le profil pollué de Fred volait
+   ses phrases du script à 0.79–0.82 (Fred n'a pas parlé du tout).
+4. Leçon de méthode : la vérification « les 2 derniers embeddings sont
+   fred-like » du 22/08 13h49 était CIRCULAIRE (comparée à une base déjà
+   polluée) — le témoignage de Fred a corrigé le diagnostic.
+
+**Décisions :**
+- **Les profils s'inscrivent en conditions calmes uniquement.** La réponse
+  aux faux rejets musique n'est PAS la diversité de profil en bruit : c'est
+  le tour perdu assumé (préférence Fred) ou un micro dédié (lead roadmap).
+  Ne plus jamais recommander un top-up « musique en cours ».
+- **Gardes d'adaptation** (`voice_guard.py`, testées) : (1) marge
+  inter-profils `ADAPT_MARGIN` 0.10 — pas d'absorption si un autre profil
+  inscrit score presque autant ; (2) gel total de l'adaptation pendant une
+  inscription ouverte ; (3) chaque adaptation (ou refus) est journalisée —
+  l'emballement d'aujourd'hui était invisible faute de log.
+- **Profil de Fred réinitialisé** (irrécupérable : rien d'origine ou
+  presque ne restait ; état pollué sauvegardé
+  `data/voices/fred.npz.bak-20260822-1350`). Ré-inscription au calme via le
+  script. Les 3 embeddings de Camille sont sains (cohérence 0.76–0.79) et
+  conservés ; elle complète ses 5 phrases après Fred.
+- Séquelle connue : les attributions `speaker=fred` du 22/08 matin dans
+  `transcripts.db` sont fausses (femme/fils) — laissées en l'état,
+  consommateurs avertis.

@@ -277,11 +277,14 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
 ## À faire (par ordre de valeur estimée)
 
 1. ~~Top-up du profil de Fred en conditions cuisine + musique~~ **fait 21/08
-   au soir** (10 énoncés, musique en cours). A révélé un bug : un top-up sur
-   profil au cap (`PROFILE_MAX` 24, cible absolue 32) ne se fermait jamais —
-   corrigé (compteur dans le marqueur + TTL 1 h), voir `docs/DECISIONS.md`
-   2026-08-21. **À vérifier à l'usage** : sims des prochaines sessions
-   cuisine+musique (grep VoiceGate).
+   puis INVERSÉ le 22/08 — fausse bonne idée** : les embeddings musique ont
+   rendu le profil poreux (famille acceptée comme fred à 0.61–0.86 toute la
+   matinée, emballement de l'adaptation, inscription de Camille volée).
+   Profil de Fred réinitialisé + ré-inscrit AU CALME ; gardes d'adaptation
+   ajoutées (marge inter-profils, gel pendant inscription, journalisation).
+   Verdict : faux rejets en musique = tour perdu assumé ou micro dédié
+   (item 13) — plus jamais de top-up en bruit. `docs/DECISIONS.md`
+   2026-08-22. (Le bug top-up-au-cap corrigé le 21/08 reste valable.)
 2. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
    enroll <nom>`, puis la personne suit le script imprimé, seule avec
    Merlin. Vérifier le passage de micro (« Merlin, et pour moi… » en
@@ -335,10 +338,10 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
     boucle principale (audio continu vers le cloud = rupture voice_guard).
     Exige sa propre décision privacy dans `docs/DECISIONS.md` avant tout
     code. Voir `docs/DECISIONS.md` 2026-08-21.
-13. **Micro dédié cuisine (lead parqué, conditionné aux données)** : ne
-    décider qu'après avoir mesuré l'effet du top-up du 21/08 sur les sims
-    en conditions cuisine+musique (grep VoiceGate). Si les sims restent
-    sous/collées au seuil 0.60 : un micro FIXE aide doublement (SNR loin
+13. **Micro dédié cuisine (lead PROMU le 22/08)** : la voie « diversité de
+    profil en bruit » est morte (item 1, incident du 22/08) — le micro
+    dédié est désormais LE levier restant contre les faux rejets en
+    musique. Un micro FIXE aide doublement (SNR loin
     champ + canal acoustique constant → profil stable), mais aucun AEC ne
     soustraira la musique Sonos (source externe, pas de signal de
     référence) et le plafond « parole simultanée » demeure. Candidat déjà
