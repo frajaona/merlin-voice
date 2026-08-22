@@ -1332,3 +1332,21 @@ poison, pas un remède.** Chronologie mesurée (`data/merlin.log`) :
 - Séquelle connue : les attributions `speaker=fred` du 22/08 matin dans
   `transcripts.db` sont fausses (femme/fils) — laissées en l'état,
   consommateurs avertis.
+
+## 2026-08-22 — Profils reconstruits : séparation fred/camille mesurée (baseline post-incident)
+
+Les deux profils ré-inscrits au calme le 22/08 (fred 14:08, camille 14:12,
+même téléphone, même pièce, même script). Mesure sur les 16 embeddings :
+
+- fred vs soi 0.65–0.87, vs camille 0.38–0.73 (pire marge +0.12) ;
+- camille vs soi 0.62–0.86, vs fred 0.37–0.66 (pire marge +0.07) ;
+- 6/16 embeddings croisent 0.60 contre l'AUTRE profil, mais l'attribution
+  max-rule est correcte sur 16/16.
+
+Marges plus fines que la baseline du 13/08 (femme 0.08–0.54 vs fred) —
+cause probable : inscription même session/même canal/mêmes phrases, qui
+gonfle la similarité croisée. Attendu : décorrélation progressive par
+l'adaptation gardée (la marge 0.10 refuse les énoncés ambigus → apprentissage
+plus lent, jamais de pollution croisée). Si les marges restent fines à
+l'usage : top-up AU CALME de camille un autre jour. À surveiller : les
+mésattributions dans le log (grep VoiceGate), désormais visibles.
