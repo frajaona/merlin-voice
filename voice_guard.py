@@ -86,6 +86,10 @@ from pipecat.utils.time import time_now_iso8601
 DATA_DIR = Path(__file__).resolve().parent / "data"
 LEGACY_PROFILE_PATH = DATA_DIR / "voice_profile.npz"
 VOICES_DIR = DATA_DIR / "voices"
+# Capture du jeu d'éval locuteur (tools/eval_capture.py start <nom> / stop) :
+# tant que ce fichier contient un nom, chaque énoncé accepté par le STT est
+# archivé en wav+txt sous data/speaker-eval/<nom>/ — même canal que la prod.
+EVAL_CAPTURE_PATH = DATA_DIR / "speaker-eval" / ".capture"
 PENDING_PATH = VOICES_DIR / ".enrolling"
 VOCAB_PATH = DATA_DIR / "stt_vocab.txt"
 SPEAKER_MODEL_PATH = Path(__file__).resolve().parent / "models" / "speaker_campplus_voxceleb.onnx"
@@ -171,6 +175,17 @@ ADAPT_MARGIN = 0.10        # ...and only if no OTHER enrolled profile scores
                            # almost as high — an ambiguous voice must never be
                            # absorbed (runaway du 2026-08-22 : profil pollué →
                            # absorbe la famille → encore plus poreux)
+ATTRIB_MARGIN = 0.05       # naming a turn also requires a margin over the
+                           # 2nd profile: below it the voice is ambiguous →
+                           # unknown (mesuré 22/08 : une phrase de camille à
+                           # marge −0.02 partait chez fred ; 0.10 bloquerait
+                           # 3/16 phrases légitimes avec CAM++ — à REMONTER
+                           # après changement de modèle, cf bench_speaker)
+TOPK_SIMS = 3              # profile score = mean of the k closest stored
+                           # embeddings, not the centroid — a multi-condition
+                           # profile's centroid is mushy (mesuré 22/08 :
+                           # équivalent au centroïde à 8 embeddings mono-
+                           # session, l'écart vient avec la diversité)
 PROFILE_MAX = 24           # rolling cap on stored embeddings per person
 VERIFY_MIN_SECS = 1.0      # embeddings of shorter clips are too unstable to
                            # judge (a real "Merlin ?" scored 0.22 vs its owner)
@@ -312,7 +327,8 @@ class PersonProfile:
         return self.count >= ENROLL_TARGET
 
     def similarity(self, embedding: np.ndarray) -> float:
-        return float(np.dot(_normed_mean(self._embeddings), embedding))
+        sims = np.sort(np.stack(self._embeddings) @ embedding)
+        return float(sims[-TOPK_SIMS:].mean())
 
     def enroll(self, embedding: np.ndarray):
         self._embeddings.append(embedding)
@@ -508,6 +524,24 @@ class GateCore:
             return None
         return float(np.dot(_normed_mean(self._anchor), embedding))
 
+    def _identify(self, embedding):
+        """(name, sim, note) — un nom n'est attribué qu'avec ATTRIB_MARGIN
+        d'avance sur le 2e profil inscrit. En dessous, la voix est ambiguë :
+        name=None et `note` porte les deux scores pour le motif de drop.
+        Mesuré 2026-08-22 : sans marge, une phrase légitime de camille
+        partait chez fred (marge −0.02) — nommer est un acte, on préfère
+        l'inconnu au mauvais nom. L'ancre d'échange, elle, reste utilisable
+        (même voix, même micro : elle DÉSAMBIGUÏSE)."""
+        name, sim = self.household.best_match(embedding)
+        if name is None:
+            return None, sim, None
+        second = self.household.second_best(name, embedding)
+        if second is not None and sim - second < ATTRIB_MARGIN:
+            return None, sim, (
+                f"voix ambiguë ({name} {sim:.2f} / autre profil {second:.2f})"
+            )
+        return name, sim, None
+
     def _is_activator_lenient(self, embedding) -> bool:
         """Short-utterance identity check against the activator, at the
         lenient SHORT_WAKE_SIM bar (profile or live anchor) — closers are
@@ -516,7 +550,7 @@ class GateCore:
         gate prefers not acting."""
         if embedding is None or self.activator is None:
             return False
-        name, sim = self.household.best_match(embedding)
+        name, sim, _ = self._identify(embedding)
         if name == self.activator and sim is not None and sim >= SHORT_WAKE_SIM:
             return True
         anchor_sim = self._anchor_sim(embedding)
@@ -642,12 +676,14 @@ class GateCore:
                 "il faut une phrase complète (« Merlin, tu es là ? »)"
             )
             return False, HOLD_REASON
-        name, sim = self.household.best_match(embedding)
+        name, sim, ambiguous = self._identify(embedding)
         if name is None or sim is None or sim < self._threshold:
             logger.info(
-                f"VoiceGate: éveil sous privé refusé — meilleur profil "
-                f"{name or 'aucun'}, sim={0.0 if sim is None else sim:.2f} "
-                f"< {self._threshold} (barre pleine, pas de leniency sous privé)"
+                "VoiceGate: éveil sous privé refusé — "
+                + (ambiguous or f"meilleur profil {name or 'aucun'}, "
+                                f"sim={0.0 if sim is None else sim:.2f} "
+                                f"< {self._threshold}")
+                + " (barre pleine, pas de leniency sous privé)"
             )
             return False, HOLD_REASON
         self._hold_since = None
@@ -709,7 +745,7 @@ class GateCore:
             return True, "vérification indisponible"
 
         verified = duration >= VERIFY_MIN_SECS and len(words) >= VERIFY_MIN_WORDS
-        name, sim = self.household.best_match(embedding)
+        name, sim, ambiguous = self._identify(embedding)
         known = name is not None and sim is not None and sim >= self._threshold
 
         # Enrollment session: unmatched voices are the enrollee — and so is a
@@ -765,8 +801,9 @@ class GateCore:
                 self.last_speaker = name
                 return True, f"éveil, nouvel activateur {name} (sim={sim:.2f})"
             return False, (
-                f"pas l'activateur ({self.activator}) — meilleur profil "
-                f"{name or 'aucun'} (sim={0.0 if sim is None else sim:.2f})"
+                f"pas l'activateur ({self.activator}) — "
+                + (ambiguous or f"meilleur profil {name or 'aucun'} "
+                                f"(sim={0.0 if sim is None else sim:.2f})")
             )
 
         # Activation: opening (or re-opening) an exchange.
@@ -777,13 +814,15 @@ class GateCore:
                 self._touch_attention()
                 self.last_speaker = name
                 return True, f"éveil par {name} (sim={sim:.2f})"
-            return False, f"voix inconnue (sim={0.0 if sim is None else sim:.2f})"
+            return False, ambiguous or f"voix inconnue (sim={0.0 if sim is None else sim:.2f})"
         # Short wake ("Merlin ?"): embeddings too unstable for the full bar.
         if name is not None and sim is not None and sim >= SHORT_WAKE_SIM:
             self._bind(name)  # anchor starts on the first verified utterance
             self._touch_attention()
             self.last_speaker = name
             return True, f"éveil par {name} (court, sim={sim:.2f})"
+        if ambiguous:
+            return False, ambiguous + " (court)"
         return False, f"voix inconnue (court, sim={0.0 if sim is None else sim:.2f})"
 
     def _handle_enrollment(self, pending: str, words, embedding, duration) -> tuple:
@@ -864,6 +903,32 @@ class GuardedWhisperSTT(WhisperSTTServiceMLX):
             ).astype(np.float32)
         return audio_f32
 
+    def _maybe_capture_eval(self, audio_f32: np.ndarray, text: str):
+        """Archive l'audio EXACT vu par l'embedder (jeu d'éval locuteur).
+
+        Actif seulement quand data/speaker-eval/.capture contient un nom
+        (tools/eval_capture.py) — hors capture, aucun audio n'est stocké.
+        Best-effort : ne casse jamais le chemin chaud."""
+        try:
+            if not EVAL_CAPTURE_PATH.exists():
+                return
+            label = EVAL_CAPTURE_PATH.read_text(encoding="utf-8").strip()
+            if not label:
+                return
+            out_dir = EVAL_CAPTURE_PATH.parent / label
+            out_dir.mkdir(parents=True, exist_ok=True)
+            path = out_dir / f"utt-{int(time.time() * 1000)}.wav"
+            pcm = (np.clip(audio_f32, -1.0, 1.0) * 32767).astype(np.int16)
+            with wave.open(str(path), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(16000)
+                w.writeframes(pcm.tobytes())
+            path.with_suffix(".txt").write_text(text, encoding="utf-8")
+            logger.info(f"eval capture: {label}/{path.name} [{text}]")
+        except Exception as e:
+            logger.warning(f"eval capture échouée: {e}")
+
     async def run_stt(self, audio: bytes):
         try:
             import mlx_whisper
@@ -915,6 +980,8 @@ class GuardedWhisperSTT(WhisperSTTServiceMLX):
                 if self._log_fn:
                     self._log_fn(f"[filtré: hallucination {reason}] {text}")
                 return
+
+            self._maybe_capture_eval(audio_f32, text)
 
             frame = TranscriptionFrame(text, self._user_id, time_now_iso8601(), Language.FR)
             frame.speech_secs = duration

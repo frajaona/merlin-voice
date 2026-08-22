@@ -274,6 +274,19 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   `tools/test_home_assistant.py` (7 cas, fake HA) ; vérifié en réel
   (statut + allumer/éteindre Suspension Dressing). `docs/DECISIONS.md`.
 
+- **2026-08-22** — **Attribution forte, étape 1** : (1) **marge
+  d'attribution** (`ATTRIB_MARGIN` 0.05) — nommer un tour exige une avance
+  sur le 2e profil, sinon « voix ambiguë » droppée avec les deux scores
+  (mesuré : une phrase de camille à marge −0.02 partait chez fred) ; l'ancre
+  d'échange désambiguïse les suites, les stops ne sont pas margés ;
+  (2) **scoring top-3** (`TOPK_SIMS`) au lieu du centroïde — équivalent
+  aujourd'hui (mesuré), robuste quand les profils se diversifient, aucun
+  recalibrage de seuil nécessaire ; (3) **capture du jeu d'éval**
+  (`tools/eval_capture.py`, wav+txt via le canal de prod, gitignoré) et
+  **banc de modèles** (`tools/bench_speaker.py`, 5 candidats en cache).
+  Fumée : TitaNet-L EER 0 % / marges +0.40 sur voix de démo (à confirmer
+  sur les nôtres — item 2). Tests 13/13. `docs/DECISIONS.md` 2026-08-22.
+
 ## À faire (par ordre de valeur estimée)
 
 1. ~~Top-up du profil de Fred en conditions cuisine + musique~~ **fait 21/08
@@ -285,45 +298,54 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
    Verdict : faux rejets en musique = tour perdu assumé ou micro dédié
    (item 13) — plus jamais de top-up en bruit. `docs/DECISIONS.md`
    2026-08-22. (Le bug top-up-au-cap corrigé le 21/08 reste valable.)
-2. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
+2. **Changer de modèle d'embedding locuteur (mesuré, pas cru)** — étape 2
+   de « attribution forte » (étape 1 shippée le 22/08 : marge d'attribution
+   0.05, scoring top-3, gardes d'adaptation). Reste : (a) enregistrer le jeu
+   d'éval (`tools/eval_capture.py start <nom>`, ~20 phrases variées AU CALME
+   par personne, fils inclus, puis `stop`) ; (b) `tools/bench_speaker.py`
+   (candidats téléchargés ; fumée : TitaNet-L EER 0 %, marges +0.40 sur les
+   voix de démo — à confirmer sur les nôtres) ; (c) swap du modèle,
+   ré-inscription des profils, recalibrage seuils + marges sur les mesures.
+   Ensuite seulement : AS-norm si nécessaire. `docs/DECISIONS.md` 2026-08-22.
+3. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
    enroll <nom>`, puis la personne suit le script imprimé, seule avec
    Merlin. Vérifier le passage de micro (« Merlin, et pour moi… » en
    phrase complète).
-3. **Plugin `demande_a_claude` (escalade cloud opt-in)** : outil appelé sur
+4. **Plugin `demande_a_claude` (escalade cloud opt-in)** : outil appelé sur
    demande explicite (« demande à Claude », « réfléchis vraiment ») → modèle
    cloud en streaming, réponse parlée phrase par phrase derrière une
    phrase-pont. Backend en env `MERLIN_ESCALATE_*` (Claude Opus 5 ou Gemini
    3.1 Pro, à A/B sur usage réel). Seuls les tours escaladés quittent la
    machine ; inactif hors activateur Fred / en mode famille. Voir
    `docs/DECISIONS.md` 2026-08-21 (« Merlin plus puissant »).
-4. **Exploiter transcripts.db comme jeu de test** : après ~1 semaine d'usage,
+5. **Exploiter transcripts.db comme jeu de test** : après ~1 semaine d'usage,
    rejouer les lignes `[filtré: …]` et les vraies transcriptions pour ajuster
    les seuils sur données réelles, enrichir `data/stt_vocab.txt` avec les mots
    mal reconnus, et comparer des variantes Whisper (fine-tunes français).
-5. **`voice_profile.py prune`** : retirer les embeddings aberrants d'un profil
+6. **`voice_profile.py prune`** : retirer les embeddings aberrants d'un profil
    (celui à consistance min ~0.47 chez Fred est un candidat).
-6. **Inscription par commande vocale** : « Merlin, apprends la voix de Camille »
+7. **Inscription par commande vocale** : « Merlin, apprends la voix de Camille »
    → appelle un plugin qui ouvre l'inscription (aujourd'hui : CLI seulement).
-7. **Gating de Whisper hors attention** (privacy + compute) : ne transcrire que
+8. **Gating de Whisper hors attention** (privacy + compute) : ne transcrire que
    si l'attention est ouverte ou si le moteur d'éveil vient de tirer. À peser :
    on perdrait la collecte de données STT hors attention. (Tension notée avec
    un éventuel Kyutai STT always-on — voir `docs/DECISIONS.md` 2026-08-21.)
-8. **Dashboard riche v2 (mi-terme)** : le dashboard vanilla du 17/08 reste le
+9. **Dashboard riche v2 (mi-terme)** : le dashboard vanilla du 17/08 reste le
    client du quotidien ; une app plus ambitieuse (React ou autre, avec build)
    vivra **à côté** (ex. montée sur `/app`), en réutilisant le même contrat :
    token Bearer, REST `/api/workshop*`, messages RTVI du data channel (dont
    `server-message`/`gate-decision`). Idées : historique `transcripts.db`,
    stats du gate par locuteur, replay des tours filtrés, gestion des profils.
-9. **Approbation par réponse Telegram** (entrant) : seulement si l'usage des
+10. **Approbation par réponse Telegram** (entrant) : seulement si l'usage des
    notifications sortantes le justifie. Le bot Telegram existe côté sortant
    depuis le 21/08 (`notify.py`) — il manque le long-polling `getUpdates`,
    l'allowlist chat_id et le slug explicite dans la réponse (jamais un
    « oui » nu). L'option chat.db iMessage (Full Disk Access, schéma fragile)
    est abandonnée. Voir `docs/DECISIONS.md` 2026-08-16 et 2026-08-21.
-10. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
+11. **Entraîner un vrai modèle d'éveil** (openWakeWord custom « Merlin » sur
    données synthétiques françaises) si le zipformer montre des faiblesses en
    conditions bruyantes.
-11. **Sonos multiroom** : plan complet en 4 phases dans **`docs/SONOS.md`**
+12. **Sonos multiroom** : plan complet en 4 phases dans **`docs/SONOS.md`**
    (architecture arrêtée le 18/08, voir `docs/DECISIONS.md`). Résumé : HA
    Yellow = plan de contrôle (REST), lecture toujours native Sonos (liens de
    partage), résolveurs minces (Music.app AppleScript pour Apple Music perso,
@@ -331,14 +353,14 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
    Music.app→AirPlay 2 seulement pour les playlists perso. La phase 1 crée le
    client HA réutilisable par l'outil `home_assistant` (lumières/volets, item
    de la revue du 13/08).
-12. **« Mode débat » speech-to-speech (lead parqué)** : session opt-in sur un
+13. **« Mode débat » speech-to-speech (lead parqué)** : session opt-in sur un
     modèle audio-natif cloud (GPT-Realtime-2 ou Gemini Live — pipecat 1.3.0
     embarque les deux services) en pipeline parallèle : le gate local ouvre
     la session, « Merlin stop » (canal brut, local) la tue. Écarté comme
     boucle principale (audio continu vers le cloud = rupture voice_guard).
     Exige sa propre décision privacy dans `docs/DECISIONS.md` avant tout
     code. Voir `docs/DECISIONS.md` 2026-08-21.
-13. **Micro dédié cuisine (lead PROMU le 22/08)** : la voie « diversité de
+14. **Micro dédié cuisine (lead PROMU le 22/08)** : la voie « diversité de
     profil en bruit » est morte (item 1, incident du 22/08) — le micro
     dédié est désormais LE levier restant contre les faux rejets en
     musique. Un micro FIXE aide doublement (SNR loin

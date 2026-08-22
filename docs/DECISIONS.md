@@ -1350,3 +1350,45 @@ l'adaptation gardée (la marge 0.10 refuse les énoncés ambigus → apprentissa
 plus lent, jamais de pollution croisée). Si les marges restent fines à
 l'usage : top-up AU CALME de camille un autre jour. À surveiller : les
 mésattributions dans le log (grep VoiceGate), désormais visibles.
+
+## 2026-08-22 — Attribution forte, étape 1 : marge d'attribution + top-k + banc de modèles
+
+Demande Fred : « un mécanisme d'attribution vraiment fort ». Plan en deux
+étapes ; l'étape 1 (code) est shippée, l'étape 2 (changement de modèle)
+attend les enregistrements.
+
+**Mesures qui ont fixé les choix** (LOO sur les 16 embeddings réels) :
+- Marges self−cross par énoncé : fred 0.07→0.33, camille **−0.02**→0.26.
+  La marge négative = une phrase de camille partait chez fred, garanti.
+- **Top-3 ≈ centroïde à 8 embeddings mono-session** (écarts ≤ 0.03) — le
+  scoring top-k (`TOPK_SIMS=3`) est adopté pour sa robustesse structurelle
+  (le centroïde d'un profil multi-conditions est flou — c'est lui qui a
+  amplifié l'incident musique), mais AUCUN recalibrage de seuil n'est
+  nécessaire aujourd'hui : 0.60 / 0.35 / 0.75 gardent leur sens.
+- **`ATTRIB_MARGIN = 0.05`** (pas 0.10) : 0.10 bloquerait 3/16 phrases
+  légitimes avec CAM++ ; 0.05 attrape la mésattribution mesurée en n'en
+  bloquant qu'une. À REMONTER après le changement de modèle. Nommer devient
+  un acte : sous la marge, la voix est « ambiguë » (droppée, motif loggé
+  avec les deux scores) ; l'ancre d'échange reste utilisable — même voix,
+  même micro, elle désambiguïse les suites d'échange. Les stops ne sont PAS
+  margés (s'arrêter est l'action sûre). Gating appliqué : éveil (long et
+  court), sortie de mode privé, clôtures, chemin principal.
+
+**Jeu d'éval locuteur + banc de modèles** (étape 2, outillé) :
+- `tools/eval_capture.py start <nom>` → chaque énoncé accepté par le STT
+  est archivé wav 16 k + transcript sous `data/speaker-eval/<nom>/` (canal
+  de PROD : téléphone→WebRTC→VAD ; hors capture, aucun audio stocké —
+  jamais commité, `data/` est gitignoré). Protocole : ~20 phrases variées
+  AU CALME par personne, y compris le fils (mesurer sa confusion avec fred,
+  il a été mésattribué le 22/08).
+- `tools/bench_speaker.py` : compare CAM++ (actuel), CAM++_LM,
+  ResNet152/293_LM (WeSpeaker), TitaNet-L (NeMo) — téléchargés dans
+  `models/`. Verdict sur la PIRE MARGE, pas seulement l'EER.
+- Fumée sur les wav de démo sherpa-onnx (3 voix zh, canaux inconnus — PAS
+  concluant pour nous, juste indicatif) : CAM++ EER 50 % et marges
+  négatives ; ResNet293_LM marges toutes positives ; **TitaNet-L EER 0 %,
+  marges +0.40, 29 ms/énoncé** (vs 16 ms actuel). Si ça se confirme sur nos
+  voix : swap → ré-inscription des profils (l'espace change) → recalibrage
+  seuils + remontée d'ATTRIB_MARGIN/ADAPT_MARGIN sur les mesures du banc.
+- Étape ultérieure (parquée) : normalisation de score type AS-norm si le
+  nouveau modèle ne suffit pas à stabiliser les seuils entre conditions.

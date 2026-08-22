@@ -537,6 +537,31 @@ def test_adaptation_guards():
     print("ok: adaptation gardée — marge inter-profils, gel pendant inscription")
 
 
+def test_ambiguous_attribution_drops():
+    """Marge d'attribution (2026-08-22) : nommer est un acte — une voix qui
+    score presque pareil sur deux profils n'est pas nommée, le tour tombe."""
+    clock = FakeClock()
+    fred, wife = unit(1), unit(2)
+    with tempfile.TemporaryDirectory() as tmp:
+        household = make_household(tmp)
+        household.finish_enrollment()
+        enroll_voice(household, "fred", fred, 100)
+        enroll_voice(household, "camille", wife, 200)
+        core = make_core(household, clock)
+
+        # A voice exactly between the two profiles: above threshold on both,
+        # margin ~0 -> ambiguous, dropped, neither activator nor speaker set.
+        mixed = (fred + wife) / np.linalg.norm(fred + wife)
+        ok, why = core.evaluate("Merlin quelle est la météo demain", mixed, 2.0)
+        assert not ok and "ambiguë" in why, why
+        assert core.activator is None and core.last_speaker is None
+
+        # A clear voice still wakes normally.
+        ok, why = core.evaluate("Merlin quelle est la météo demain", near(fred, 50), 2.0)
+        assert ok and core.activator == "fred", why
+    print("ok: attribution ambiguë -> drop (aucun nom posé), voix franche passe")
+
+
 if __name__ == "__main__":
     test_hallucination_filters()
     test_owner_enrollment_flow()
@@ -549,4 +574,5 @@ if __name__ == "__main__":
     test_embedding_separation()
     test_topup_rolling_cap_and_stale_marker()
     test_adaptation_guards()
+    test_ambiguous_attribution_drops()
     print("all voice_guard tests passed")
