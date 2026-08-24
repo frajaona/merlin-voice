@@ -45,7 +45,8 @@ Environment knobs (all optional):
     MERLIN_STT_MODEL          HF repo of the MLX Whisper model
     MERLIN_STT_PROMPT_EXTRA   extra vocabulary appended to the initial prompt
     MERLIN_SPEAKER_GATE       "off" to disable speaker verification
-    MERLIN_SPEAKER_THRESHOLD  cosine similarity acceptance threshold (0.60)
+    MERLIN_SPEAKER_THRESHOLD  cosine similarity acceptance threshold (0.45,
+                              espace TitaNet-L depuis 2026-08-24)
     MERLIN_FAMILY_MODE        "1": any enrolled voice accepted mid-exchange
                               (no activator binding — friendlier at home,
                               weaker in public)
@@ -92,7 +93,11 @@ VOICES_DIR = DATA_DIR / "voices"
 EVAL_CAPTURE_PATH = DATA_DIR / "speaker-eval" / ".capture"
 PENDING_PATH = VOICES_DIR / ".enrolling"
 VOCAB_PATH = DATA_DIR / "stt_vocab.txt"
-SPEAKER_MODEL_PATH = Path(__file__).resolve().parent / "models" / "speaker_campplus_voxceleb.onnx"
+# TitaNet-L depuis le 2026-08-24 (banc sur nos voix : EER 6.8 % vs 31.8 %
+# pour CAM++, 0 fausse acceptation au seuil 0.45, 26 ms/énoncé — voir
+# tools/bench_speaker.py et docs/DECISIONS.md). Changer de modèle = changer
+# d'espace : ré-inscrire les profils et recalibrer les seuils.
+SPEAKER_MODEL_PATH = Path(__file__).resolve().parent / "models" / "nemo_en_titanet_large.onnx"
 
 WAKE_PREFIX = "merl"  # matches "merlin" and close mishearings
 # Real French words that start like the wake word — never wake on these.
@@ -149,9 +154,12 @@ def is_polite_closer(words: list) -> bool:
 
 STT_MODEL = os.getenv("MERLIN_STT_MODEL", "mlx-community/whisper-large-v3-turbo")
 SPEAKER_GATE_ENABLED = os.getenv("MERLIN_SPEAKER_GATE", "on").lower() not in ("off", "0", "false")
-# Calibrated 2026-08-13 on real data: owner's utterances score 0.72-0.89
-# against his profile, another speaker on the same phone scored 0.08-0.54.
-SPEAKER_THRESHOLD = float(os.getenv("MERLIN_SPEAKER_THRESHOLD", "0.60"))
+# Calibrated 2026-08-24 on the recorded eval set (44 utterances, fred +
+# camille, TitaNet-L space): legit clips ≥1.2s score 0.49-0.79 against their
+# own profile (p10 0.54), the OTHER speaker never exceeds 0.37. At 0.45 :
+# 0 fausse acceptation, 2 faux rejets (clips atypiques) sur 43. Historique
+# CAM++ (échelle différente, seuil 0.60) : docs/DECISIONS.md 2026-08-13/24.
+SPEAKER_THRESHOLD = float(os.getenv("MERLIN_SPEAKER_THRESHOLD", "0.45"))
 FAMILY_MODE = os.getenv("MERLIN_FAMILY_MODE", "0").lower() in ("1", "on", "true")
 STOP_ACTIVATOR_ONLY = os.getenv("MERLIN_STOP_ACTIVATOR_ONLY", "0").lower() in ("1", "on", "true")
 REQUIRE_WAKE = os.getenv("MERLIN_REQUIRE_WAKE", "1").lower() not in ("off", "0", "false")
@@ -169,18 +177,21 @@ ENROLL_MIN_WORDS = 3
 ENROLL_PENDING_TTL = 3600  # a stale .enrolling marker expires — while open it
                            # absorbs AND answers near-any voice (incident
                            # 2026-08-21 : marqueur resté ouvert, cf DECISIONS)
-ADAPT_SIM = 0.75           # keep refining a profile on unmistakable matches
-                           # (0.55 once let a same-room bystander in)
-ADAPT_MARGIN = 0.10        # ...and only if no OTHER enrolled profile scores
+ADAPT_SIM = 0.60           # keep refining a profile on unmistakable matches —
+                           # top ~40 % des scores self mesurés (médiane 0.67,
+                           # max 0.79 en espace TitaNet ; était 0.75 en CAM++,
+                           # où 0.55 avait laissé entrer un tiers)
+ADAPT_MARGIN = 0.20        # ...and only if no OTHER enrolled profile scores
                            # almost as high — an ambiguous voice must never be
                            # absorbed (runaway du 2026-08-22 : profil pollué →
-                           # absorbe la famille → encore plus poreux)
-ATTRIB_MARGIN = 0.05       # naming a turn also requires a margin over the
+                           # absorbe la famille → encore plus poreux). Marges
+                           # légitimes mesurées : p10 +0.29, médiane +0.43.
+ATTRIB_MARGIN = 0.15       # naming a turn also requires a margin over the
                            # 2nd profile: below it the voice is ambiguous →
-                           # unknown (mesuré 22/08 : une phrase de camille à
-                           # marge −0.02 partait chez fred ; 0.10 bloquerait
-                           # 3/16 phrases légitimes avec CAM++ — à REMONTER
-                           # après changement de modèle, cf bench_speaker)
+                           # unknown (mesuré 22/08 en CAM++ : une phrase de
+                           # camille à marge −0.02 partait chez fred). Remonté
+                           # 0.05 → 0.15 au passage TitaNet : p10 des marges
+                           # légitimes +0.29, seul un clip atypique est dessous.
 TOPK_SIMS = 3              # profile score = mean of the k closest stored
                            # embeddings, not the centroid — a multi-condition
                            # profile's centroid is mushy (mesuré 22/08 :
@@ -192,7 +203,13 @@ VERIFY_MIN_SECS = 1.0      # embeddings of shorter clips are too unstable to
 VERIFY_MIN_WORDS = 3       # duration alone overstates content: it includes
                            # ~1s of VAD buffer, so a one-word "Non." measures
                            # >1s yet embedded at sim 0.08 vs its own speaker
-SHORT_WAKE_SIM = 0.35      # lenient bar for identifying a short wake utterance
+SHORT_WAKE_SIM = 0.40      # lenient bar for identifying a short wake utterance.
+                           # PAS un ratio du seuil plein : la barre doit rester
+                           # AU-DESSUS des sims croisées mesurées (autre voix
+                           # du foyer ≤ 0.37 en espace TitaNet, p90 0.33) —
+                           # l'ancienne barre CAM++ 0.35 était sous le cross
+                           # max (0.54) et laissait passer les « Merci » d'un
+                           # tiers (incident documenté).
 ANCHOR_MAX = 10            # embeddings kept from the activator's exchange
 
 # Whisper hallucination filters
@@ -258,7 +275,7 @@ _extractor = None
 
 SPEAKER_MODEL_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
-    "speaker-recongition-models/wespeaker_en_voxceleb_CAM%2B%2B.onnx"
+    "speaker-recongition-models/nemo_en_titanet_large.onnx"
 )
 
 
@@ -271,7 +288,7 @@ def _get_extractor():
         if not SPEAKER_MODEL_PATH.exists():
             import urllib.request
 
-            logger.info(f"downloading speaker model (~29 MB) to {SPEAKER_MODEL_PATH}")
+            logger.info(f"downloading speaker model (~97 MB) to {SPEAKER_MODEL_PATH}")
             SPEAKER_MODEL_PATH.parent.mkdir(exist_ok=True)
             urllib.request.urlretrieve(SPEAKER_MODEL_URL, SPEAKER_MODEL_PATH)
 
@@ -784,10 +801,10 @@ class GateCore:
                     # or vs this exchange's live anchor (same mic and room,
                     # and the activator already passed the wake bar). This is
                     # how the profile learns far-from-phone and soft speech.
-                    strong_anchor = anchor_sim is not None and anchor_sim >= 0.80
+                    strong_anchor = anchor_sim is not None and anchor_sim >= 0.65
                     if name == self.activator:
                         self._adapt(name, sim, embedding,
-                                    floor=0.45 if strong_anchor else ADAPT_SIM)
+                                    floor=0.35 if strong_anchor else ADAPT_SIM)
                 elif known:
                     self._adapt(name, sim, embedding)
                 self._touch_attention()
@@ -831,7 +848,9 @@ class GateCore:
         note = ""
         if duration >= ENROLL_MIN_SECS and len(words) >= ENROLL_MIN_WORDS:
             # Don't absorb a clearly different voice into a half-built profile.
-            suspicious = profile.count >= 2 and profile.similarity(embedding) < 0.30
+            # 0.35 : au-dessus du cross médian/p90 mesuré (0.25/0.33 TitaNet)
+            # pour bloquer une voix étrangère, sous les sims self typiques.
+            suspicious = profile.count >= 2 and profile.similarity(embedding) < 0.35
             if not suspicious:
                 profile.enroll(embedding)
                 # Top-up beyond the rolling cap: profile.count sticks at

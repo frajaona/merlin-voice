@@ -1392,3 +1392,52 @@ attend les enregistrements.
   seuils + remontée d'ATTRIB_MARGIN/ADAPT_MARGIN sur les mesures du banc.
 - Étape ultérieure (parquée) : normalisation de score type AS-norm si le
   nouveau modèle ne suffit pas à stabiliser les seuils entre conditions.
+
+## 2026-08-24 — Modèle locuteur : CAM++ → TitaNet-L, seuils recalibrés sur le banc (attribution forte, étape 2)
+
+Jeu d'éval enregistré via le canal de prod (`tools/eval_capture.py`,
+protocole du script 20 phrases/conditions, au calme) : fred 24 énoncés,
+camille 20. Banc `tools/bench_speaker.py` (scoring top-3 identique au gate,
+self en leave-one-out) :
+
+| modèle | EER | marges<0 | ms/énoncé | remarque |
+|---|---|---|---|---|
+| CAM++ (actuel) | 31.8 % | 10/44 | 14 | confirmé mauvais sur nos voix |
+| CAM++_LM | 31.8 % | 10/44 | 14 | pire en marges |
+| ResNet152_LM | 9.1 % | 2/44 | 101 | scores tassés vers 1 (cross 0.93 !) |
+| ResNet293_LM | 9.1 % | 3/44 | 198 | idem |
+| **TitaNet-L** | **6.8 %** | 2/44* | 26 | vraie séparation : self p10 0.54, cross max 0.37 |
+
+\* les 2 marges négatives de TitaNet = « Ça va ? » (1.1 s, jamais nommé par
+le gate) et un clip acoustiquement atypique. Sur les 43 clips ≥ 1.2 s :
+seuil 0.45 → **0 fausse acceptation, 2 faux rejets**.
+
+**Décisions :**
+- **TitaNet-L adopté** (`nemo_en_titanet_large.onnx`, 26 ms — chemin froid).
+  Le critère est la géométrie des scores, pas seulement l'EER : les ResNets
+  compressent tout vers 1.0 (cross à 0.93, aucune marge exploitable),
+  TitaNet ouvre un vrai fossé self/cross.
+- **Constantes recalibrées sur les mesures** (espace TitaNet) :
+  seuil 0.60→**0.45** ; ADAPT_SIM 0.75→**0.60** (top ~40 % des self) ;
+  ADAPT_MARGIN 0.10→**0.20** et ATTRIB_MARGIN 0.05→**0.15** (marges
+  légitimes : p10 +0.29, médiane +0.43) ; garde d'inscription
+  « suspicious » 0.30→**0.35** ; plancher adapt-ancre 0.45→0.35, ancre
+  forte 0.80→0.65.
+- **Leçon : une barre de leniency se cale au-dessus du cross MESURÉ, pas en
+  ratio du seuil.** SHORT_WAKE_SIM d'abord passé à 0.25 (ratio) — sous le
+  cross max 0.37 : trou attrapé par la suite de tests (stop activator-only).
+  Fixé à **0.40** (> 0.37). L'ancienne barre CAM++ 0.35 était elle-même sous
+  son cross max (0.54) — c'était la cause des « Merci » d'un tiers crédités
+  à l'activateur.
+- **Profils reconstruits depuis le jeu d'éval** (pas de ré-inscription
+  parlée) : clips ≥ 1.2 s et self LOO ≥ 0.40 → fred 21, camille 20
+  embeddings TitaNet. Anciens profils CAM++ sauvegardés
+  (`*.npz.bak-campp-20260824`). Le jeu d'éval (`data/speaker-eval/`,
+  gitignoré) devient la régression permanente du gate.
+- **Vérifié bout-en-bout sur audio réel** (chemin GateCore complet) :
+  éveil fred 0.82 ; camille mid-exchange identifiée 0.77 mais droppée (pas
+  l'activatrice) ; passage de micro « nouvel activateur camille » ; fred
+  identifié 0.91 et droppé pendant l'échange de camille. Zéro confusion.
+- À surveiller à l'usage : faux rejets voix courte/douce (barre 0.40) ;
+  le fils n'est PAS dans le jeu d'éval — l'enregistrer dès que possible et
+  re-passer le banc.

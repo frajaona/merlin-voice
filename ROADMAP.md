@@ -298,15 +298,16 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
    Verdict : faux rejets en musique = tour perdu assumé ou micro dédié
    (item 13) — plus jamais de top-up en bruit. `docs/DECISIONS.md`
    2026-08-22. (Le bug top-up-au-cap corrigé le 21/08 reste valable.)
-2. **Changer de modèle d'embedding locuteur (mesuré, pas cru)** — étape 2
-   de « attribution forte » (étape 1 shippée le 22/08 : marge d'attribution
-   0.05, scoring top-3, gardes d'adaptation). Reste : (a) enregistrer le jeu
-   d'éval (`tools/eval_capture.py start <nom>`, ~20 phrases variées AU CALME
-   par personne, fils inclus, puis `stop`) ; (b) `tools/bench_speaker.py`
-   (candidats téléchargés ; fumée : TitaNet-L EER 0 %, marges +0.40 sur les
-   voix de démo — à confirmer sur les nôtres) ; (c) swap du modèle,
-   ré-inscription des profils, recalibrage seuils + marges sur les mesures.
-   Ensuite seulement : AS-norm si nécessaire. `docs/DECISIONS.md` 2026-08-22.
+2. ~~Changer de modèle d'embedding locuteur~~ **fait 24/08** :
+   **CAM++ → TitaNet-L**, tranché sur le banc (`tools/bench_speaker.py`,
+   44 énoncés réels : EER 31.8 % → 6.8 %, cross max 0.37 vs self p10 0.54,
+   26 ms/énoncé). Seuils recalibrés sur les mesures (0.45 / marges 0.15-0.20 /
+   SHORT_WAKE 0.40 — calé au-dessus du cross mesuré, leçon documentée),
+   profils reconstruits depuis le jeu d'éval, vérifié bout-en-bout sur audio
+   réel (passage de micro fred↔camille sans confusion). Reste : enregistrer
+   le FILS (`tools/eval_capture.py start <nom>`) et re-passer le banc ;
+   AS-norm seulement si les seuils dérivent à l'usage. `docs/DECISIONS.md`
+   2026-08-24.
 3. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
    enroll <nom>`, puis la personne suit le script imprimé, seule avec
    Merlin. Vérifier le passage de micro (« Merlin, et pour moi… » en

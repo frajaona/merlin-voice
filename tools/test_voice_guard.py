@@ -524,7 +524,8 @@ def test_adaptation_guards():
         assert household.people["fred"].count == n0 + 1
 
         # Below the floor: refused.
-        core._adapt("fred", 0.60, near(fred, 302))
+        from voice_guard import ADAPT_SIM
+        core._adapt("fred", ADAPT_SIM - 0.01, near(fred, 302))
         assert household.people["fred"].count == n0 + 1
 
         # Enrollment open: frozen even on a perfect match; thaws on close.
