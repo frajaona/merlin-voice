@@ -305,7 +305,8 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
    SHORT_WAKE 0.40 — calé au-dessus du cross mesuré, leçon documentée),
    profils reconstruits depuis le jeu d'éval, vérifié bout-en-bout sur audio
    réel (passage de micro fred↔camille sans confusion). Reste : enregistrer
-   le FILS (`tools/eval_capture.py start <nom>`) et re-passer le banc ;
+   le FILS (`tools/eval_capture.py start <nom>`, en vacances au 24/08 —
+   à son retour) et re-passer le banc ;
    AS-norm seulement si les seuils dérivent à l'usage. `docs/DECISIONS.md`
    2026-08-24.
 3. **Inscrire la famille** (action utilisateur) : `tools/voice_profile.py
