@@ -3,6 +3,7 @@
 Usage:
     venv/bin/python tools/voice_profile.py                 # status of all profiles
     venv/bin/python tools/voice_profile.py enroll <name>   # open enrollment
+    venv/bin/python tools/voice_profile.py enroll <name> en # same, English script (EN mode)
     venv/bin/python tools/voice_profile.py cancel          # cancel pending enrollment
     venv/bin/python tools/voice_profile.py reset <name>    # delete a profile
 
@@ -11,6 +12,9 @@ Enrollment: after `enroll <name>`, have that person chat with Olympia alone
 watch data/merlin.log for "inscription <name> N/8". No restart needed.
 `enroll` prints a guided script (ENROLL_SCRIPT): 8 French sentences, one
 acoustic condition each — vary distance/volume/prosody, not the words.
+`enroll <name> en` pushes the English script (ENROLL_SCRIPT_EN) — for the
+English top-up measured on 2026-09-06 (docs/DECISIONS.md): the dashboard must
+be in EN mode, and short dry commands are the condition the profile misses.
 """
 import sys
 from pathlib import Path
@@ -52,10 +56,36 @@ comptent (distance, volume, intonation).
 """
 
 
-def _push_script(name: str, kind: str):
+ENROLL_SCRIPT_EN = """\
+Enrolment script (English) — alone in the room, dashboard in EN mode, one
+sentence at a time, wait for Olympia's answer. Say "Olympia" again if more
+than ~10 s have passed since her reply. The words matter little: the
+CONDITIONS do (distance, volume, intonation). Short commands count double —
+they are what the profile misses in English.
+
+ 1. 1 m from the phone, normal voice:
+    "Olympia, can you hear me well?"
+ 2. Normal voice, long sentence:
+    "Olympia, tell me what you can do in the house."
+ 3. 2–3 metres from the phone:
+    "Olympia, what will the weather be like tomorrow?"
+ 4. Soft voice, as if someone were sleeping nearby:
+    "Olympia, speak more quietly, it's late."
+ 5. Question, rising intonation:
+    "Olympia, do you think it will rain this weekend?"
+ 6. Command tone, short and dry:
+    "Olympia, turn on the kitchen light."
+ 7. Another short command, from where you usually talk to her (kitchen):
+    "Olympia, set a timer for ten minutes."
+ 8. Moving around, back to the phone:
+    "Olympia, remind me to take out the bins tomorrow morning."
+"""
+
+
+def _push_script(name: str, kind: str, script: str = ENROLL_SCRIPT):
     # Push the script to the phone (Telegram, iMessage fallback) so the
     # person can read it while moving around the room. Best-effort.
-    result = notify.send(f"Olympia — {kind} ouverte pour {name}.\n\n{ENROLL_SCRIPT}")
+    result = notify.send(f"Olympia — {kind} ouverte pour {name}.\n\n{script}")
     print(f"(script envoyé sur le téléphone : {result})")
 
 
@@ -93,6 +123,8 @@ def main():
         if len(sys.argv) < 3:
             sys.exit("usage: voice_profile.py enroll <name>")
         name = sys.argv[2].strip().lower()
+        english = len(sys.argv) > 3 and sys.argv[3].strip().lower() == "en"
+        script = ENROLL_SCRIPT_EN if english else ENROLL_SCRIPT
         VOICES_DIR.mkdir(parents=True, exist_ok=True)
         existing = VOICES_DIR / f"{name}.npz"
         if existing.exists():
@@ -106,14 +138,14 @@ def main():
                       "Olympia ALONE, varying conditions — reuse the script below, "
                       "favoring the conditions the profile misses (distance, soft "
                       "voice, another room).\n")
-                print(ENROLL_SCRIPT)
-                _push_script(name, "inscription (top-up)")
+                print(script)
+                _push_script(name, "inscription (top-up)", script)
                 return
         PENDING_PATH.write_text(name, encoding="utf-8")
         print(f"enrollment open for '{name}'. Have them chat with Olympia alone "
               f"(start with the wake word). Completes after {ENROLL_TARGET} utterances.\n")
-        print(ENROLL_SCRIPT)
-        _push_script(name, "inscription")
+        print(script)
+        _push_script(name, "inscription", script)
     elif cmd == "cancel":
         PENDING_PATH.unlink(missing_ok=True)
         print("pending enrollment cancelled")
