@@ -24,8 +24,8 @@ def synth_batch():
     cache = Path.home() / ".cache" / "kokoro-onnx"
     kokoro = Kokoro(str(cache / "kokoro-v1.0.onnx"), str(cache / "voices-v1.0.bin"))
 
-    def synth(text, voice="ff_siwis", speed=1.0):
-        s, sr = kokoro.create(text, voice=voice, speed=speed, lang="fr-fr")
+    def synth(text, voice="ff_siwis", speed=1.0, lang="fr-fr"):
+        s, sr = kokoro.create(text, voice=voice, speed=speed, lang=lang)
         t = int(len(s) * 16000 / sr)
         f = np.interp(np.linspace(0, len(s) - 1, t), np.arange(len(s)), s)
         return (np.clip(f, -1, 1) * 32767).astype(np.int16)
@@ -70,6 +70,33 @@ def test_stop_matcher():
     assert not is_stop_text("J'AI SU")
     assert not is_stop_text("")
     print("ok: stop text matcher")
+
+
+def test_matcher_en():
+    # Real English zipformer decodes of synthesized sentences (2026-09-06).
+    assert is_wake_text("OLYMPIA WHAT TIME IS IT", "en")
+    assert is_wake_text("HAY OLYMPIA HOW ARE YOU", "en")
+    assert is_wake_text("CAN YOU HEAR ME OLYMPIA", "en")
+    assert not is_wake_text("AN OLYMPIAN ATHLETE", "en")  # contains "olympia" — English exclusion
+    assert not is_wake_text("THE OLYMPIAD", "en")
+    assert not is_wake_text("THE OLYMPIC GAMES", "en")
+    assert not is_wake_text("MOUNT OLYMPUS", "en")
+    assert not is_wake_text("A LIMPID POOL", "en")
+    # French-pronounced "Olympia" through the English model: PIERRE — that is
+    # why the French engine stays on in English mode (never widen the regex).
+    assert not is_wake_text("PIERRE WHAT TIME IS IT", "en")
+    assert not is_wake_text("LAMPIERRE STOP", "en")
+    assert is_stop_text("OLYMPIA STOP", "en")
+    assert is_stop_text("OLYMPIA HUSH", "en")
+    assert is_stop_text("HUSHED OLYMPIA", "en")  # measured decode of "Hush, Olympia."
+    assert is_stop_text("OLYMPIA BE QUIET", "en")
+    assert is_stop_text("PIERRE STOP", "en")  # stop word alone: paired with a wake fired by the French engine
+    assert not is_stop_text("OLYMPIA WHAT TIME IS IT", "en")
+    assert not is_stop_text("OLYMPIA STOPPED THE MUSIC", "en")
+    assert not is_stop_text("", "en")
+    # The French engine's lists are untouched by the English ones.
+    assert not is_stop_text("OLYMPIA HUSH", "fr")
+    print("ok: english matchers")
 
 
 def stream_through(detector, state, pcm16, silence_ms=2000):
@@ -148,6 +175,65 @@ def test_detector_stop_streaming():
     assert not stop.consume(), "consume must be one-shot"
 
 
+def test_detector_streaming_en():
+    """English engine alone, native English speech."""
+    synth = synth_batch()
+    state = WakeState()
+    detector = WakeWordDetector(state, langs=("en",))
+    detector.start()
+    en = dict(voice="af_heart", lang="en-us")
+    positives = ["Olympia, what time is it?", "Hey Olympia, how are you?", "Olympia?", "Can you hear me, Olympia?"]
+    negatives = ["The Olympic games.", "An Olympian athlete.", "A limpid pool.", "Mount Olympus."]
+    hits = sum(stream_through(detector, state, synth(t, **en)) for t in positives)
+    false = sum(stream_through(detector, state, synth(t, **en)) for t in negatives)
+    detector.stop()
+    print(f"ok: streaming detector [en] — recall {hits}/{len(positives)}, false wakes {false}/{len(negatives)}")
+    assert hits >= 3, f"recall too low: {hits}"
+    assert false == 0, f"false wakes: {false}"
+
+
+def test_detector_dual_engines():
+    """English mode as deployed: French + English engines on the same audio.
+    The family says "Olympia" the French way, then speaks English."""
+    synth = synth_batch()
+    wake = WakeState()
+    stop = StopState()
+    detector = WakeWordDetector(wake, stop, langs=("fr", "en"))
+    detector.start()
+    gap = np.zeros(4800, dtype=np.int16)  # 300 ms
+
+    def fr_name_then(tail, name="Olympia,", speed=1.0):
+        return np.concatenate([synth(name, speed=speed), gap, synth(tail, voice="af_heart", lang="en-us")])
+
+    positives = [
+        fr_name_then("what time is it?"),
+        fr_name_then("can you play some music?", name="Olympia ?", speed=1.15),
+        synth("Olympia, what time is it?", voice="af_heart", lang="en-us"),  # anglicized
+    ]
+    negatives = [
+        synth("What time is it?", voice="af_heart", lang="en-us"),
+        synth("An Olympian athlete.", voice="af_heart", lang="en-us"),
+        synth("On va à Berlin demain matin."),
+    ]
+    hits = sum(stream_through(detector, wake, p) for p in positives)
+    false = sum(stream_through(detector, wake, n) for n in negatives)
+    # Stop: the French engine fires the wake on the French-pronounced name,
+    # the English engine hears the English stop word right after.
+    stop_hits = 0
+    for clip in (fr_name_then("stop."), fr_name_then("hush."), synth("Olympia, stop.", voice="af_heart", lang="en-us")):
+        wake._last = 0.0
+        stop_hits += stream_through(detector, stop, clip, silence_ms=3500)
+    wake._last = 0.0
+    false_stop = stream_through(detector, stop, fr_name_then("what time is it?"), silence_ms=3500)
+    detector.stop()
+    print(f"ok: dual engines [fr+en] — wake recall {hits}/{len(positives)}, false wakes {false}/{len(negatives)}, "
+          f"stop recall {stop_hits}/3, false stop {int(false_stop)}")
+    assert hits >= 2, f"wake recall too low: {hits}"
+    assert false == 0, f"false wakes: {false}"
+    assert stop_hits >= 2, f"stop recall too low: {stop_hits}"
+    assert not false_stop, "a plain wake sentence fired the stop"
+
+
 def test_gatecore_raw_wake():
     """GateCore accepts a mangled transcription when the raw wake fired."""
     import tempfile
@@ -191,7 +277,10 @@ def test_gatecore_raw_wake():
 if __name__ == "__main__":
     test_matcher()
     test_stop_matcher()
+    test_matcher_en()
     test_gatecore_raw_wake()
     test_detector_streaming()
     test_detector_stop_streaming()
+    test_detector_streaming_en()
+    test_detector_dual_engines()
     print("all wake_word tests passed")

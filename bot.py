@@ -5,6 +5,11 @@ Pipecat + MLX Whisper + local LLM (Ollama direct, Hermes via env override) + Kok
 Public-use hardening lives in voice_guard.py: speaker verification (only the
 owner's voice is answered), attention gating (wake word "Olympia" + follow-up
 window, so side-conversation is ignored) and Whisper hallucination filtering.
+
+Language: one per session, French by default. The dashboard sends
+`lang: "fr"|"en"` in the /api/offer body; run_bot builds STT prompt, gate word
+lists, LLM persona, TTS voice, VAD pause and wake engines from the matching
+lang_profile.LangProfile (the `fr` profile is the historical configuration).
 """
 import asyncio
 import datetime
@@ -78,14 +83,14 @@ from voice_guard import (
     normalize_words as _normalize_words,
 )
 from wake_word import StopState, WakeState, WakeWordDetector, WakeWordListener
+import lang_profile
 
-# Raw-audio wake-word engine (French zipformer) — "off" falls back to
-# transcript-only wake detection.
+# Raw-audio wake-word engine (zipformers, per language profile) — "off" falls
+# back to transcript-only wake detection.
 RAW_WAKE = os.getenv("MERLIN_RAW_WAKE", "on").lower() not in ("off", "0", "false")
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection, IceServer
-from pipecat.transcriptions.language import Language
 
 load_dotenv(override=True)
 
@@ -162,41 +167,18 @@ LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 # day). Cap the history sent to the LLM: system prompt + at most this many
 # messages (2 per plain turn, more when tools fire). 40 ≈ 20 recent turns.
 MAX_HISTORY_MSGS = int(os.getenv("MERLIN_MAX_HISTORY_MSGS", "40"))
-TTS_VOICE = os.getenv("TTS_VOICE", "ff_siwis")
+# TTS voice, system prompt and the other language-bound values live in
+# lang_profile.py (TTS_VOICE env still selects the French voice).
 
-SYSTEM_PROMPT = """Tu es Olympia, une assistante personnelle intelligent et chaleureux. Tu réponds toujours en français et tu tutoies l'utilisateur.
-
-Règles importantes :
-- Tes réponses seront lues à voix haute — pas de markdown, pas d'astérisques, pas de puces, pas de symboles spéciaux.
-- Phrases courtes et naturelles. Maximum deux phrases par réponse sauf si on te demande des détails.
-- Réponds de façon conversationnelle, comme si tu parlais à quelqu'un en face de toi.
-- Ne termine jamais ta réponse par une question de politesse (« Tu veux autre chose ? », « Veux-tu que je change quelque chose ? »). Pose une question uniquement s'il te manque une information indispensable pour agir.
-- Ne dis jamais "En tant qu'IA..." ou "Je suis un assistant...".
-- N'annonce jamais une action comme effectuée si tu n'as pas d'outil pour la faire réellement.
-
-Nous sommes le {current_date}. Tiens-en compte pour juger de la fraîcheur des informations.
-
-Tu disposes d'un outil web_search pour chercher sur internet. Utilise-le dès que la question porte sur des informations actuelles ou vérifiables : météo, actualités, horaires, prix, résultats sportifs, faits récents. Pour les actualités, utilise type "news". N'invente jamais une information datée — cherche. Ignore les résultats trop anciens par rapport à la question. Après une recherche, réponds en une ou deux phrases avec l'essentiel, sans citer les adresses des sites.
-
-Fabrication de nouveaux outils — le déroulé est toujours le même :
-1. Si l'utilisateur demande une action que tu ne sais pas encore faire, appelle IMMÉDIATEMENT request_feature — ne dis jamais « je note ta demande » sans avoir réellement appelé cet outil. Ensuite dis-le honnêtement et propose de fabriquer l'outil (quelques minutes).
-2. N'appelle build_skill que si l'utilisateur confirme explicitement la fabrication.
-3. Si l'utilisateur demande où en est la fabrication, appelle workshop_status.
-4. Quand un outil terminé attend l'activation, décris-le brièvement et n'appelle approve_skill que si l'utilisateur confirme explicitement l'activation.
-Ne lance jamais une fabrication ni une activation sans confirmation.
-"""
-
-
-def _system_prompt() -> str:
-    months = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet",
-              "août", "septembre", "octobre", "novembre", "décembre"]
-    days = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+def _system_prompt(profile: lang_profile.LangProfile = lang_profile.FR) -> str:
     now = datetime.date.today()
-    date_fr = f"{days[now.weekday()]} {now.day} {months[now.month - 1]} {now.year}"
-    return SYSTEM_PROMPT.format(current_date=date_fr) + _skill_ready_note()
+    return (
+        profile.system_prompt.format(current_date=profile.date_fn(now))
+        + _skill_ready_note(profile)
+    )
 
 
-def _skill_ready_note() -> str:
+def _skill_ready_note(profile: lang_profile.LangProfile = lang_profile.FR) -> str:
     """One-time note about freshly built skill candidates awaiting approval."""
     import json
     ready_file = Path(__file__).resolve().parent / "data" / "skill-ready.jsonl"
@@ -212,12 +194,7 @@ def _skill_ready_note() -> str:
         "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8"
     )
     capabilities = ", ".join(f"« {e['capability']} » (slug : {e['slug']})" for e in fresh)
-    return (
-        "\nNote interne : de nouveaux outils ont été fabriqués et attendent une approbation "
-        f"avant activation : {capabilities}. Mentionne-le brièvement au début de la "
-        "conversation, une seule fois. Si Fred confirme vouloir l'activer, appelle "
-        "l'outil approve_skill avec le slug correspondant."
-    )
+    return profile.skill_ready_note.format(capabilities=capabilities)
 
 # Tool plugins: every plugins/*.py exporting SCHEMA + handler is auto-loaded.
 # New capabilities are added there, never wired here (see plugins/README.md).
@@ -259,22 +236,24 @@ class UserTranscriptLogger(FrameProcessor):
     a "[clavier]" prefix so STT tuning can filter them out.
     """
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, lang: str = "fr"):
         super().__init__()
         self._session_id = session_id
+        self._lang = lang
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, TranscriptionFrame):
             await asyncio.to_thread(
                 TRANSCRIPTS.append, self._session_id, "user", frame.text,
-                getattr(frame, "speaker_name", None),
+                getattr(frame, "speaker_name", None), self._lang,
             )
         elif isinstance(frame, LLMMessagesAppendFrame):
             for m in frame.messages:
                 if m.get("role") == "user" and isinstance(m.get("content"), str):
                     await asyncio.to_thread(
-                        TRANSCRIPTS.append, self._session_id, "user", f"[clavier] {m['content']}"
+                        TRANSCRIPTS.append, self._session_id, "user",
+                        f"[clavier] {m['content']}", None, self._lang,
                     )
         await self.push_frame(frame, direction)
 
@@ -289,9 +268,10 @@ class AssistantResponseLogger(FrameProcessor):
     not have been heard. Tool-call rounds without text log nothing.
     """
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, lang: str = "fr"):
         super().__init__()
         self._session_id = session_id
+        self._lang = lang
         self._parts: list | None = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -304,7 +284,9 @@ class AssistantResponseLogger(FrameProcessor):
             text = "".join(self._parts).strip()
             self._parts = None
             if text:
-                await asyncio.to_thread(TRANSCRIPTS.append, self._session_id, "assistant", text)
+                await asyncio.to_thread(
+                    TRANSCRIPTS.append, self._session_id, "assistant", text, None, self._lang
+                )
         await self.push_frame(frame, direction)
 
 class HistoryTrimmer(FrameProcessor):
@@ -419,7 +401,8 @@ class EchoAwareMinWordsStrategy(MinWordsUserTurnStartStrategy):
         return await super()._handle_transcription(frame)
 
 
-async def run_bot(webrtc_connection: SmallWebRTCConnection):
+async def run_bot(webrtc_connection: SmallWebRTCConnection, lang: str = "fr"):
+    profile = lang_profile.get(lang)
     transport = SmallWebRTCTransport(
         webrtc_connection=webrtc_connection,
         params=TransportParams(
@@ -431,10 +414,12 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     # confidence 0.3 let breaths and background noise through to Whisper,
     # which hallucinated turns ("Merci.", "Sous-titrage ST' 501"). 0.6 still
     # catches soft speech through a phone mic but skips most noise.
+    # stop_secs: 0.8 in French (calibrated); the English profile waits a
+    # little longer because learners hesitate mid-sentence.
     vad = VADProcessor(
         vad_analyzer=SileroVADAnalyzer(
             params=VADParams(
-                stop_secs=0.8,
+                stop_secs=profile.vad_stop_secs,
                 start_secs=0.2,
                 confidence=0.6,
             )
@@ -442,19 +427,22 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     )
 
     session_id = f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
-    logger.info(f"session started: {session_id}")
+    logger.info(f"session started: {session_id} (lang={profile.code})")
 
     def _log_filtered(text: str):
         """Rejected utterances keep feeding the STT test set, marked as such."""
         asyncio.get_running_loop().run_in_executor(
-            None, TRANSCRIPTS.append, session_id, "user", text
+            None, TRANSCRIPTS.append, session_id, "user", text, None, profile.code
         )
 
     # fp16 turbo (not Q4): measurably better French accuracy, same
     # architecture; plenty of headroom in RAM.
     stt = GuardedWhisperSTT(
-        settings=WhisperSTTServiceMLX.Settings(model=STT_MODEL, language=Language.FR),
+        settings=WhisperSTTServiceMLX.Settings(
+            model=STT_MODEL, language=profile.pipecat_language
+        ),
         log_fn=_log_filtered,
+        profile=profile,
     )
 
     llm = OpenAILLMService(
@@ -468,9 +456,18 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     )
 
     tts = KokoroTTSService(
-        voice_id=TTS_VOICE,
-        settings=KokoroTTSService.Settings(language=Language.FR),
+        voice_id=profile.tts_voice,
+        settings=KokoroTTSService.Settings(language=profile.tts_language),
     )
+    if profile.tts_speed != 1.0:
+        # The pipecat service pins speed=1.0; the profile may slow speech
+        # down for learners (MERLIN_TTS_SPEED_EN).
+        _orig_create_stream = tts._kokoro.create_stream
+
+        def _create_stream_speed(text, voice, lang, speed=1.0, **kw):
+            return _orig_create_stream(text, voice=voice, lang=lang, speed=profile.tts_speed, **kw)
+
+        tts._kokoro.create_stream = _create_stream_speed
 
     # Track what the bot says out loud: for barge-in echo detection and for
     # the question detection of the attention gate. (The transcript log of
@@ -488,13 +485,17 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
 
     tts.run_tts = _run_tts_tracking
 
+    # Plugins read the session language off the LLM service for their
+    # spoken fillers (lang_profile.phrase).
+    llm.merlin_lang = profile.code
+
     # Rescan plugins per conversation so freshly approved skills load without
     # a restart (mid-session activation is handled by the approve_skill tool).
     plugins = load_plugins()
     for tool_name, module in plugins.items():
         llm.register_function(tool_name, module.handler)
 
-    messages = [{"role": "system", "content": _system_prompt()}]
+    messages = [{"role": "system", "content": _system_prompt(profile)}]
     context = LLMContext(
         messages=messages,
         tools=ToolsSchema(standard_tools=[m.SCHEMA for m in plugins.values()]),
@@ -520,7 +521,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
     # their own rejections with a "[filtré: …]" prefix.
     wake_state = WakeState() if RAW_WAKE else None
     stop_state = StopState() if RAW_WAKE else None
-    gate_core = GateCore(HouseholdProfiles(), last_bot, wake_state=wake_state)
+    gate_core = GateCore(HouseholdProfiles(), last_bot, wake_state=wake_state, profile=profile)
     voice_gate = VoiceGate(core=gate_core, log_fn=_log_filtered)
 
     stages = [transport.input()]
@@ -528,7 +529,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         # The stop phrase rides the same raw-audio decoder as the wake word;
         # on fire the listener cuts TTS immediately and puts the gate on hold.
         stages.append(WakeWordListener(
-            WakeWordDetector(wake_state, stop_state),
+            WakeWordDetector(wake_state, stop_state, langs=profile.raw_wake_langs),
             stop_state=stop_state,
             on_stop=gate_core.raw_stop,
         ))
@@ -537,11 +538,11 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
         vad,
         stt,
         voice_gate,
-        UserTranscriptLogger(session_id),
+        UserTranscriptLogger(session_id, profile.code),
         aggregators.user(),
         HistoryTrimmer(),
         llm,
-        AssistantResponseLogger(session_id),
+        AssistantResponseLogger(session_id, profile.code),
         SilentTurnTTSFilter(),
         tts,
         transport.output(),
@@ -652,7 +653,9 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
             pcs_map.pop(conn.pc_id, None)
             logger.info(f"Connection {conn.pc_id} closed")
 
-        background_tasks.add_task(run_bot, connection)
+        # Session language from the dashboard toggle; anything unknown → French.
+        lang = lang_profile.get(request.get("lang")).code
+        background_tasks.add_task(run_bot, connection, lang)
 
     answer = connection.get_answer()
     pcs_map[answer["pc_id"]] = connection

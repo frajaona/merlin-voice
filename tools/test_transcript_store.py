@@ -50,7 +50,20 @@ def test_migration_from_old_schema():
         print("ok: old schema migrated in place")
 
 
+def test_lang_column():
+    """Session language stored per turn; legacy callers leave it NULL."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = TranscriptStore(Path(tmp) / "t.db")
+        store.append("s1", "user", "what time is it", speaker="fred", lang="en")
+        store.append("s1", "assistant", "It is noon.", lang="en")
+        store.append("s2", "user", "quelle heure", speaker="fred")
+        rows = store._conn.execute("SELECT content, lang FROM turns ORDER BY id").fetchall()
+        assert rows == [("what time is it", "en"), ("It is noon.", "en"), ("quelle heure", None)], rows
+        print("ok: lang column")
+
+
 if __name__ == "__main__":
     test_speaker_column()
     test_migration_from_old_schema()
+    test_lang_column()
     print("all transcript_store tests passed")

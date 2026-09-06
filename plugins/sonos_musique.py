@@ -53,6 +53,8 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.services.llm_service import FunctionCallParams
 
+from lang_profile import phrase
+
 from plugins import _sonos_common as common
 
 SCHEMA = FunctionSchema(
@@ -541,7 +543,7 @@ async def handler(params: FunctionCallParams):
     if not recherche:
         await params.result_callback({"error": "dis-moi quoi jouer"})
         return
-    await params.llm.push_frame(TTSSpeakFrame("Je lance ça."))
+    await params.llm.push_frame(TTSSpeakFrame(phrase("launching", params.llm)))
     try:
         result = await asyncio.to_thread(_run, recherche, type_, piece, service)
     except Exception as e:

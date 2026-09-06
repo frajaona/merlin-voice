@@ -8,6 +8,8 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.services.llm_service import FunctionCallParams
 
+from lang_profile import phrase
+
 SCHEMA = FunctionSchema(
     name="voir_la_meteo_d",
     description=(
@@ -105,7 +107,7 @@ async def handler(params: FunctionCallParams):
     
     logger.info(f"voir_la_meteo_d: lieu={lieu}, date={date}")
     
-    await params.llm.push_frame(TTSSpeakFrame("Je regarde ça."))
+    await params.llm.push_frame(TTSSpeakFrame(phrase("looking", params.llm)))
     
     try:
         result = await asyncio.to_thread(_fetch_weather, lieu, date)

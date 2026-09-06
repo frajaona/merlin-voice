@@ -36,7 +36,8 @@ embedding failure fails CLOSED here (the one spot where it does).
 
 Environment knobs (all optional):
     MERLIN_STOP_WORDS         comma list of stop words, each active when
-                              paired with the wake word ("chut,chute,stop")
+                              paired with the wake word ("chut,chute,stop");
+                              English mode: MERLIN_STOP_WORDS_EN (lang_profile.py)
     MERLIN_STOP_ACTIVATOR_ONLY "1": mid-exchange only the activator's voice
                               may stop (lenient bar — stop phrases are short;
                               embedding failure still stops; the raw-audio
@@ -81,8 +82,9 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.frameworks.rtvi.frames import RTVIServerMessageFrame
 from pipecat.services.whisper.stt import WhisperSTTServiceMLX
-from pipecat.transcriptions.language import Language
 from pipecat.utils.time import time_now_iso8601
+
+import lang_profile
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 LEGACY_PROFILE_PATH = DATA_DIR / "voice_profile.npz"
@@ -106,14 +108,13 @@ WAKE_PREFIXES = ("olymp", "olimp")
 # Real French words that start like the wake word — never wake on these.
 # ("Olympe de Gouges" was once transcribed "Olympia de Gouges" under the
 # prompt bias — accepted: rare, and the speaker gate still applies.)
-WAKE_EXCLUDE = {
-    "olympe", "olympes", "olympien", "olympiens", "olympienne", "olympiennes",
-    "olympique", "olympiques", "olympisme", "olympiade", "olympiades",
-}
+# The lists live in lang_profile (one per language, `fr` = these values);
+# the module-level names stay as the French defaults for callers and tests.
+WAKE_EXCLUDE = lang_profile.FR.wake_exclude
 
 
-def is_wake_word(word: str) -> bool:
-    return word.startswith(WAKE_PREFIXES) and word not in WAKE_EXCLUDE
+def is_wake_word(word: str, exclude: frozenset = WAKE_EXCLUDE) -> bool:
+    return word.startswith(WAKE_PREFIXES) and word not in exclude
 
 
 # Exact-word match, not prefix: "stoppe la musique" or "parachute" must not
@@ -121,9 +122,7 @@ def is_wake_word(word: str) -> bool:
 # on the hyphen and "stop" matches. "chute" is in the default because Whisper
 # transcribes the interjection "Chut !" as "chute." (measured) — the cost is
 # a false stop on "Olympia … chute …" (rare, and a false stop is one re-wake).
-STOP_WORDS = frozenset(
-    w.strip() for w in os.getenv("MERLIN_STOP_WORDS", "chut,chute,stop").lower().split(",") if w.strip()
-)
+STOP_WORDS = lang_profile.FR.stop_words  # env MERLIN_STOP_WORDS, read there
 
 # Gate reasons for the stop flow — VoiceGate keys logging behavior on these
 # (the stop command itself is logged, held-back turns are not).
@@ -131,8 +130,8 @@ STOP_REASON = "stop → mode privé"
 HOLD_REASON = "privé"
 
 
-def has_stop_word(words: list) -> bool:
-    return any(w in STOP_WORDS for w in words)
+def has_stop_word(words: list, stop_words: frozenset = STOP_WORDS) -> bool:
+    return any(w in stop_words for w in words)
 
 
 # Clôture polie : « merci » / « au revoir » pendant un échange = fin de
@@ -143,21 +142,17 @@ def has_stop_word(words: list) -> bool:
 # remerciements/adieux : PAS « ok »/« d'accord »/« oui », qui sont des
 # réponses légitimes aux questions du bot (ils restent de simples mots
 # d'accompagnement ici).
-CLOSER_CORE = frozenset(("merci", "revoir", "bientot", "adieu"))
-CLOSER_FILLER = frozenset((
-    "olympia", "beaucoup", "bien", "tres", "c", "est", "gentil", "super",
-    "parfait", "nickel", "top", "cool", "a", "au", "la", "le", "prochaine",
-    "bon", "bonne", "nuit", "journee", "soiree", "et", "ca", "va", "d",
-    "accord", "ok",
-))
+CLOSER_CORE = lang_profile.FR.closer_core
+CLOSER_FILLER = lang_profile.FR.closer_filler
 
 
-def is_polite_closer(words: list) -> bool:
+def is_polite_closer(words: list, core: frozenset = CLOSER_CORE,
+                     filler: frozenset = CLOSER_FILLER) -> bool:
     """True when the whole (normalized) utterance is a thanks/farewell."""
     return (
         0 < len(words) <= 6
-        and any(w in CLOSER_CORE for w in words)
-        and all(w in CLOSER_CORE or w in CLOSER_FILLER for w in words)
+        and any(w in core for w in words)
+        and all(w in core or w in filler for w in words)
     )
 
 STT_MODEL = os.getenv("MERLIN_STT_MODEL", "mlx-community/whisper-large-v3-turbo")
@@ -223,14 +218,7 @@ ANCHOR_MAX = 10            # embeddings kept from the activator's exchange
 # Whisper hallucination filters
 NO_SPEECH_MAX = 0.55       # drop segments Whisper itself doubts contain speech
 LOGPROB_MIN = -1.1         # drop very low-confidence segments
-_BLOCK_MARKERS = (
-    "sous titrage",
-    "sous titres",
-    "amara org",
-    "abonnez vous",
-    "merci d avoir regarde",
-    "n oubliez pas de vous abonner",
-)
+_BLOCK_MARKERS = lang_profile.FR.hallucination_markers
 
 
 def normalize_words(text: str) -> list:
@@ -240,14 +228,14 @@ def normalize_words(text: str) -> list:
     return [w for w in "".join(c if c.isalnum() else " " for c in text).split() if w]
 
 
-def looks_hallucinated(text: str) -> str | None:
+def looks_hallucinated(text: str, markers: tuple = _BLOCK_MARKERS) -> str | None:
     """Return a reason string if the transcription matches a known Whisper
     hallucination pattern, else None."""
     words = normalize_words(text)
     if not words:
         return "vide"
     joined = " ".join(words)
-    for marker in _BLOCK_MARKERS:
+    for marker in markers:
         if marker in joined:
             return f"motif connu ({marker})"
     # Repetition loops: "t'es pas qu'on peut" ×4 etc.
@@ -501,11 +489,15 @@ class GateCore:
         followup_secs: float = FOLLOWUP_SECS,
         question_secs: float = QUESTION_SECS,
         wake_state=None,  # wake_word.WakeState — raw-audio wake channel
+        profile: lang_profile.LangProfile = lang_profile.FR,
         now=time.monotonic,
     ):
         self.household = household
         self._last_bot = last_bot
         self._wake_state = wake_state
+        # Word lists of the session's language (wake exclusions, stop words,
+        # polite closers). The decision logic itself is language-free.
+        self._profile = profile
         self._speaker_gate = speaker_gate
         self._threshold = threshold
         self._family_mode = family_mode
@@ -580,6 +572,9 @@ class GateCore:
             return True
         anchor_sim = self._anchor_sim(embedding)
         return anchor_sim is not None and anchor_sim >= SHORT_WAKE_SIM
+
+    def _is_closer(self, words: list) -> bool:
+        return is_polite_closer(words, self._profile.closer_core, self._profile.closer_filler)
 
     def _bind(self, name: str | None, embedding=None):
         self.activator = name
@@ -729,7 +724,7 @@ class GateCore:
         """
         self.last_speaker = None
         words = normalize_words(text)
-        transcript_wake = any(is_wake_word(w) for w in words)
+        transcript_wake = any(is_wake_word(w, self._profile.wake_exclude) for w in words)
         wake = transcript_wake
         # Raw-audio channel: the wake-word engine may have caught "Olympia"
         # even when Whisper mangled it. The fire must fall inside this
@@ -742,7 +737,7 @@ class GateCore:
         # stop is the privacy failure). Requires the wake word in (or
         # raw-heard around) the same utterance so a lone "chut"/"stop" in
         # conversation passes. MERLIN_STOP_ACTIVATOR_ONLY narrows it.
-        if has_stop_word(words) and wake:
+        if has_stop_word(words, self._profile.stop_words) and wake:
             if self._stop_allowed(embedding):
                 self.enter_hold()
                 return False, STOP_REASON
@@ -764,7 +759,7 @@ class GateCore:
             # Sauf pour une clôture pure : y répondre (« De rien ! ») relance
             # l'échange, et sans voix on ne peut pas savoir si c'est
             # l'activateur — on l'ignore (clore est une action).
-            if self.activator is not None and attentive and is_polite_closer(words):
+            if self.activator is not None and attentive and self._is_closer(words):
                 return False, "clôture polie ignorée (voix non vérifiée)"
             self._touch_attention()
             return True, "vérification indisponible"
@@ -788,7 +783,7 @@ class GateCore:
             # clôtures sont courtes ; une autre voix (ou une voix
             # invérifiable) est ignorée : ni « De rien ! », ni fermeture,
             # la fenêtre expirera d'elle-même.
-            if is_polite_closer(words):
+            if self._is_closer(words):
                 if self._is_activator_lenient(embedding):
                     self._close_exchange()
                     return False, "clôture polie (échange fermé)"
@@ -885,11 +880,8 @@ class GateCore:
 # Pipecat wrappers
 # ---------------------------------------------------------------------------
 
-def _initial_prompt() -> str:
-    prompt = (
-        "Discussion en français avec Olympia, un assistant vocal. "
-        "Météo, minuteur, actualités, l'Île d'Yeu, La Rochelle, Bordeaux."
-    )
+def _initial_prompt(profile: lang_profile.LangProfile = lang_profile.FR) -> str:
+    prompt = profile.stt_prompt
     if VOCAB_PATH.exists():
         vocab = [l.strip() for l in VOCAB_PATH.read_text(encoding="utf-8").splitlines() if l.strip()]
         if vocab:
@@ -907,11 +899,13 @@ class GuardedWhisperSTT(WhisperSTTServiceMLX):
     speech duration) to the TranscriptionFrame for the VoiceGate downstream.
     """
 
-    def __init__(self, *, compute_speaker_embedding: bool = True, log_fn=None, **kwargs):
+    def __init__(self, *, compute_speaker_embedding: bool = True, log_fn=None,
+                 profile: lang_profile.LangProfile = lang_profile.FR, **kwargs):
         super().__init__(**kwargs)
         self._compute_speaker_embedding = compute_speaker_embedding
         self._log_fn = log_fn  # log_fn(text) — records filtered utterances
-        self._prompt = _initial_prompt()
+        self._profile = profile
+        self._prompt = _initial_prompt(profile)
 
     def _pcm_to_float(self, audio: bytes) -> np.ndarray:
         # SegmentedSTTService hands us a WAV container — skip the header
@@ -977,7 +971,7 @@ class GuardedWhisperSTT(WhisperSTTServiceMLX):
                 mlx_whisper.transcribe,
                 audio_f32,
                 path_or_hf_repo=self._settings.model,
-                language="fr",
+                language=self._profile.whisper_lang,
                 temperature=0.0,
                 condition_on_previous_text=False,
                 initial_prompt=self._prompt,
@@ -1001,7 +995,7 @@ class GuardedWhisperSTT(WhisperSTTServiceMLX):
 
             if not text:
                 return
-            reason = looks_hallucinated(text)
+            reason = looks_hallucinated(text, self._profile.hallucination_markers)
             if reason:
                 logger.info(f"STT: dropping hallucination ({reason}): [{text}]")
                 if self._log_fn:
@@ -1010,7 +1004,9 @@ class GuardedWhisperSTT(WhisperSTTServiceMLX):
 
             self._maybe_capture_eval(audio_f32, text)
 
-            frame = TranscriptionFrame(text, self._user_id, time_now_iso8601(), Language.FR)
+            frame = TranscriptionFrame(
+                text, self._user_id, time_now_iso8601(), self._profile.pipecat_language
+            )
             frame.speech_secs = duration
             frame.speaker_embedding = None
             if self._compute_speaker_embedding:

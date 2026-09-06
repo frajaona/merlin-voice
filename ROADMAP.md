@@ -299,6 +299,23 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   décodeur après reset, idem Merlin), stop 2/3, 0 faux éveil. À valider
   sur audio réel — détails et mesures dans `docs/DECISIONS.md`.
 
+- **2026-09-06** — **Mode anglais** (toggle FR/EN du dashboard, une langue
+  par session envoyée dans `/api/offer`) : `lang_profile.py` regroupe tout ce
+  qui dépend de la langue (Whisper lang + prompt, marqueurs d'hallucination,
+  exclusions d'éveil, mots de stop, clôtures polies, prompt système, voix
+  Kokoro, `stop_secs` VAD, moteurs d'éveil, phrases-pont des plugins) — le
+  profil `fr` = constantes historiques, chemin français inchangé. Profil `en`
+  pour une famille apprenante (prompt « écouteur bienveillant », mots
+  français attendus dans le prompt Whisper, VAD 1,0 s). Canal d'éveil brut :
+  zipformer **français conservé + anglais ajouté** (`wake_word.ENGINES`,
+  OU des deux). Colonne `lang` dans `transcripts.db`. Tests : voice_guard
+  13/13, wake_word 8/8 (anglais natif 4/4 éveils, 0 faux ; fr+en : éveil 3/3,
+  stop 2/3, 0 faux), probe RTVI bout-en-bout en `en` (Whisper anglais, gate,
+  météo via outil, réponse anglaise) et régression `fr`. Mesures et
+  décisions : `docs/DECISIONS.md` 2026-09-06. **Reste à faire avant usage
+  familial** : capture d'éval locuteur sur 20 phrases anglaises et banc
+  tool-call anglais (voir « À faire »).
+
 ## À faire (par ordre de valeur estimée)
 
 1. ~~Top-up du profil de Fred en conditions cuisine + musique~~ **fait 21/08
@@ -437,19 +454,16 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 
 ### Fonctionnalités
 
-- **Profil nocturne** (moitié manquante de la mémoire « plan A ») : job qui
-  distille `transcripts.db` en `profile.md` lisible/éditable, injecté au
-  démarrage de session. Ensuite seulement : rappel par embeddings (plan B,
-  `nomic-embed-text` + table keyée sur turns.id) ; mem0 uniquement si A+B
-  plafonnent.
-- ~~Outil `home_assistant`~~ **fait 21/08** (lumières + scènes via HA Yellow
-  REST ; pas de volets — aucune entité `cover` dans HA, à étendre le jour où
-  il y en aura). Voir « Fait » et `docs/DECISIONS.md` 2026-08-21.
-- **`delegate()`** (ex-« → Hermes », retiré le 21/08) : tâches longues hors
-  chemin chaud via un worker headless (agy/codex, comme l'atelier), résultat
-  en follow-up parlé ou briefing matinal.
-- **Raisonnement à la demande** : outil qui relance le même modèle avec
-  `reasoning_effort` élevé (4–5 s, annoncé par une phrase-pont).
+- **Mode anglais — validation avant usage familial** (implémenté le 06/09,
+  voir « Fait ») : (1) `tools/eval_capture.py` sur un script de 20 phrases
+  **anglaises** (Fred + Camille) — profils inscrits en français, TitaNet-L
+  réputé peu sensible à la langue mais à mesurer ; si sims propres < 0,45,
+  top-up avec des énoncés anglais ; (2) `tools/probe_tool_call.py` en anglais
+  d'apprenant contre les vrais schémas (le probe minimal a donné 2/9 « I will
+  set a timer » sans appel d'outil) ; (3) une session réelle
+  `MERLIN_WAKE_DEBUG=1` en anglais (prononciation du nom par la famille,
+  hésitations vs `stop_secs` 1,0) ; (4) à l'oreille : `MERLIN_TTS_SPEED_EN`
+  0,9 et voix `bf_emma` (britannique) vs `af_heart`.
 
 ### Bancs d'essai (données avant conviction — utiliser transcripts.db)
 

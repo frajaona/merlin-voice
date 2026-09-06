@@ -5,8 +5,14 @@ Silero VAD → MLX Whisper (fp16 turbo) → Ollama (qwen, `reasoning_effort:"non
 → Kokoro TTS. Public-use hardening in `voice_guard.py` (household speaker gate,
 attention gate with activator binding, wake word "Olympia" (was "Merlin"
 until 2026-09-06), stop phrase "Olympia chut/stop" → privacy
-hold) and `wake_word.py` (raw-audio wake-word + stop-phrase engine). Tool
-plugins auto-load from `plugins/*.py`.
+hold) and `wake_word.py` (raw-audio wake-word + stop-phrase engines). Tool
+plugins auto-load from `plugins/*.py`. **Language per session** (since
+2026-09-06): the dashboard FR/EN toggle sends `lang` in `/api/offer`;
+`lang_profile.py` holds every language-bound value (Whisper lang + prompt,
+gate word lists, LLM persona, Kokoro voice, VAD pause, wake engines, plugin
+fillers). The `fr` profile is the historical calibrated configuration; `en`
+keeps the French zipformer (hears "Olympia" said the French way) and adds
+the English one. Plugins speak via `lang_profile.phrase(key, params.llm)`.
 
 ## Read these before making changes
 
@@ -42,7 +48,10 @@ plugins auto-load from `plugins/*.py`.
   l'activateur (bouton « 🤫 Chut » du dashboard → activateur courant).
   Sonde protocole : `tools/probe_rtvi.py` (bot lancé requis).
 - Restart: `launchctl kickstart -k gui/$(id -u)/com.merlin.bot` (a plain
-  `kill` of the port PID also works — launchd relaunches it). Do NOT
+  `kill` of the port PID also works — launchd relaunches it). **Check
+  `curl -sk https://localhost:7860/api/health` first: `connections` > 0 means
+  a phone is live and the restart will drop it** (the dashboard does not
+  auto-reconnect; happened 2026-09-06). Do NOT
   `pkill -f "python bot.py"` (macOS process name is capital-P `Python`; a
   half-dead process once kept serving stale code).
 - Logs: `data/merlin.log` (rotating). Gate decisions: grep `VoiceGate`.
@@ -58,11 +67,15 @@ plugins auto-load from `plugins/*.py`.
 - Voice profiles: `tools/voice_profile.py [status|enroll|cancel|reset]`
   (enroll on a complete profile opens a diversity top-up).
 - Tests (offline, no bot needed): `venv/bin/python tools/test_voice_guard.py`
-  and `tools/test_wake_word.py`.
+  and `tools/test_wake_word.py` (both cover the `en` profile too).
+  End-to-end with the bot running: `tools/probe_rtvi.py` (`MERLIN_PROBE_LANG=en`
+  for an English session).
 
 ## Env knobs
 
 See the docstrings of `voice_guard.py` (MERLIN_SPEAKER_*, MERLIN_FAMILY_MODE,
-MERLIN_REQUIRE_WAKE, MERLIN_FOLLOWUP/QUESTION_SECS, MERLIN_STT_*) and `bot.py`
-(MERLIN_RAW_WAKE, LLM_*). Defaults are the calibrated values from
+MERLIN_REQUIRE_WAKE, MERLIN_FOLLOWUP/QUESTION_SECS, MERLIN_STT_*), `bot.py`
+(MERLIN_RAW_WAKE, LLM_*) and `lang_profile.py` (MERLIN_STOP_WORDS[_EN],
+MERLIN_VAD_STOP_SECS_EN, MERLIN_TTS_VOICE_EN, MERLIN_TTS_SPEED_EN,
+MERLIN_RAW_WAKE_EN). Defaults are the calibrated values from
 `docs/DECISIONS.md`.

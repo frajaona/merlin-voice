@@ -1543,3 +1543,225 @@ sur les plafonds réels. Parqué d'un commun accord.
   permanente, le levier est le micro dédié HA Voice PE (item 14), pas une
   app. Rouvrir seulement si « iPad posé, écran éteint » devient le mode
   d'usage principal du foyer.
+
+## 2026-09-06 — Mode anglais : analyse et mesures (rien d'implémenté)
+
+**Demande** : pouvoir basculer l'assistante en anglais depuis le dashboard.
+Pas de bilingue simultané (français OU anglais), et **aucune perte de
+performance ni de précision** sur le chemin français.
+
+**Inventaire de ce qui est câblé français** (par étage du pipeline) :
+
+| Étage | État actuel | Ce que l'anglais demande |
+|---|---|---|
+| VAD Silero | agnostique | rien |
+| Whisper turbo | `language="fr"` codé dans `GuardedWhisperSTT.run_stt`, `Language.FR` (settings + `TranscriptionFrame`), prompt initial français | passer la langue + un prompt anglais ; **même modèle**, pas de rechargement |
+| Filtres d'hallucination | `_BLOCK_MARKERS` français (« sous-titrage », « amara org »…) | jeu anglais (« thank you for watching », « subtitles by the amara org community », « please subscribe ») ; les filtres ratio/répétition sont agnostiques |
+| Canal éveil brut | zipformer **français** (`wake_word.py`) | zipformer **anglais** (mesure ci-dessous : le français n'entend rien sur de l'anglais) |
+| Motifs éveil | `WAKE_PREFIXES` + `WAKE_EXCLUDE` français, `_WAKE_RE` brut | exclusions anglaises (« olympian(s) », « olympus », « olympic(s) », « olympiad ») — voir piège ci-dessous |
+| Stop | chut/chute/stop, `_STOP_CHUT_RE` | « stop » marche tel quel ; ajouter « hush » (décodé HUSH 4/4 brut, 4/4 Whisper), « quiet » ; « shut » matche déjà `_STOP_CHUT_RE` (« shut up » → stop) |
+| Clôtures polies | `CLOSER_CORE`/`CLOSER_FILLER` français | thanks/thank/bye/goodbye/goodnight + fillers anglais |
+| Gate locuteur TitaNet-L | agnostique à la langue (VoxCeleb anglais) | **à mesurer** : Fred en anglais vs profil inscrit en français |
+| LLM qwen3.6 | prompt système français, date en français | prompt anglais + date anglaise ; **même modèle**, pas de rechargement |
+| Kokoro | `ff_siwis`, `fr-fr` | `af_heart` (`en-us`) ou `bf_emma` (`en-gb`) ; **même ONNX**, pas de rechargement |
+| Plugins | 4 phrases-pont parlées codées en dur (« Je regarde ça. » ×2, « Je lance ça. », « C'est l'heure ! ») ; descriptions/noms d'outils français | petit helper de langue pour les 4 phrases ; les descriptions françaises ne gênent pas qwen (à vérifier sur le banc tool-call) |
+| Dashboard | chrome en français | un toggle FR/EN, mémorisé (`localStorage`), envoyé dans le body de `/api/offer` |
+| transcripts.db | pas de colonne langue | colonne `lang` (optionnelle, utile pour filtrer le jeu STT par langue) |
+
+**Mesures (parole synthétique Kokoro `af_heart`/`bf_emma`/`am_michael`,
+vitesses 1.0 et 1.15 ; scripts jetables dans le tmp du job, même protocole
+que `tools/test_wake_word.py`) :**
+
+| Phrase | Zipformer **anglais** (`sherpa-onnx-streaming-zipformer-en-2023-06-26` int8) | Zipformer français actuel | Whisper turbo `en` |
+|---|---|---|---|
+| « Olympia, what time is it? » | OLYMPIA WHAT TIME IS IT (4/4) | *vide* | Olympia, what time is it? (4/4) |
+| « Hey Olympia, how are you? » | HAY/PAY OLYMPIA… (3/4), HALYMPIA (1.15) | *vide* | Hey Olympia… (4/4) |
+| « Olympia? » | OLYMPIA (4/4) | *vide* | Olympia. (4/4) |
+| « Can you hear me, Olympia? » | … OLYMPIA (4/4) | *vide* | idem (4/4) |
+| « Olympia, stop. » / « hush. » / « be quiet. » | OLYMPIA STOP / HUSH / BE QUIET (12/12) | *vide* | idem (12/12) |
+| « Hush, Olympia. » | HUSH OLYMPIA (2/4), HUSHED OLYMPIA, OLYMPIA seul | *vide* | Hush Olympia (3/4), « Hoshvillimpia » |
+| « the Olympic games » | THE OLYMPIC GAMES | *vide* | The Olympic Games. |
+| « Mount Olympus » | MOUNT OLYMPUS | *vide* | Mount Olympus. |
+| « an Olympian athlete » | AN OLYMPIAN ATHLETE | *vide* | An Olympian athlete. |
+| « the Olympiad » | THE OLYMPIAD | *vide* | The Olympiad. |
+| « a limpid pool » | A LIMPID POOL (4/4) | *vide* | **« Olympia pool »** 3/4 avec « Olympia » dans le prompt ; 1/6 « Olympid pools » sans |
+| « I'm Pia » | I AM PIERRE / I AM PEER | *vide* | I'm Pia. |
+
+- Le zipformer **français ne décode rien** sur de l'audio anglais (14/14
+  vides, alors qu'il décode bien le français dans la même passe) → un
+  second modèle est indispensable en mode anglais. Coût : 82 Mo sur disque
+  (fichiers int8 seuls), ~220 Mo résidents une fois chargé, décode ~70 ms
+  pour 1,5 s d'audio (même ordre que le français). Un seul tourne par session.
+- **Piège mesuré** : `_WAKE_RE = ol[iy]mp[iy]a` matche **OLYMPIAN** (le mot
+  contient « olympia »), et `WAKE_PREFIXES` matche « olympian » côté Whisper
+  (« olympien » est exclu, « olympian » ne l'est pas). En anglais il faut
+  exclure `ol[iy]mp[iy]an` côté brut et olympian(s)/olympus/olympic(s) côté
+  transcription. « Olympiad » est déjà couvert des deux côtés.
+- **Biais du prompt Whisper** : avec « Olympia » dans le prompt initial,
+  « a limpid pool » devient « Olympia pool » 3/4 — un faux éveil côté
+  transcription (limité aux voix inscrites par la gate locuteur). Sans le
+  nom dans le prompt, Whisper écrit quand même « Olympia » 12/12 et le
+  faux positif tombe à 1/6 (« Olympid pools », qui matche encore le préfixe
+  `olymp`). Recommandation : **ne pas mettre le nom dans le prompt anglais**
+  (même phénomène qu'« Olympe de Gouges » en français, 06/09).
+- Whisper `en` : ~100 ms par énoncé de 1,5 s en régime établi, identique au
+  français (même modèle). Kokoro : 3,3 s d'audio en ~510 ms (`af_heart`),
+  3,8 s en ~580 ms (`ff_siwis`) — même modèle, même vitesse.
+
+**Options de bascule :**
+1. **Langue par session, choisie à la connexion** (recommandée) : le toggle
+   du dashboard est envoyé dans le body de `/api/offer`, `run_bot` reçoit la
+   langue et construit STT/TTS/gate/éveil/prompt avec un profil de langue
+   (`LangProfile` : whisper_lang, prompt STT, marqueurs d'hallucination,
+   exclusions d'éveil, mots de stop, clôtures, prompt système, formateur de
+   date, voix/lang Kokoro, dossier zipformer, phrases-pont des plugins). Le
+   profil `fr` = exactement les constantes d'aujourd'hui → chemin français
+   inchangé à l'octet près, tests existants intacts. Bascule = reconnexion
+   (~1 s). Les deux zipformers peuvent être préchargés au démarrage (+220 Mo).
+   Les plugins lisent la langue sur `params.llm` (attribut posé par
+   `run_bot`) pour leurs 4 phrases-pont.
+2. Mode global serveur (`MERLIN_LANG` + restart via API) : redémarrage de
+   20–30 s à chaque bascule, surface ops en plus, aucun gain. **Écarté.**
+3. Détection automatique par Whisper (`language=None`) : une passe de
+   détection par énoncé (latence), fragile sur les énoncés courts, et Fred
+   ne veut pas de bilingue. **Écarté.**
+
+**Ce qui doit être mesuré avant de déclarer l'anglais fiable :**
+- **Gate locuteur en anglais** : les profils sont inscrits sur du français.
+  TitaNet-L est réputé peu sensible à la langue, mais un écart de quelques
+  centièmes de cosinus est documenté en cross-lingue. À mesurer avec
+  `tools/eval_capture.py` sur un script de 20 phrases **anglaises** (Fred +
+  Camille) : si les sims propres restent ≥ 0,45 (p10 mesuré 0,54 en
+  français) rien à faire ; sinon top-up des profils avec des énoncés
+  anglais (un top-up reste ≤ 24 embeddings, cap `PROFILE_MAX`). Une baisse
+  se traduit par des **faux rejets**, jamais des fausses acceptations —
+  cohérent avec la préférence de Fred.
+- **Tool-call en anglais** : le banc `tools/probe_tool_call.py` avec des
+  requêtes anglaises face aux descriptions d'outils françaises (attendu :
+  qwen s'en accommode ; sinon traduire les descriptions dans le profil).
+- **Éveil sur audio réel anglais** : mêmes trois voyelles d'attaque à
+  vérifier qu'en français (`MERLIN_WAKE_DEBUG=1` une session).
+
+**Effort estimé** : ~1 journée (profil de langue + toggle + zipformer
+anglais + 4 phrases-pont + tests `test_voice_guard`/`test_wake_word` en
+variante `af_heart`), puis la capture d'éval anglaise.
+
+### Complément du 06/09 : locuteurs non natifs, « écoute bienveillante » — mesures
+
+**Contrainte ajoutée par Fred** : la famille n'est pas anglophone (niveau
+variable, accent marqué) ; l'anglais est introduit pour apprendre. Olympia
+doit deviner l'intention plutôt que buter sur la forme.
+
+**Mesures (mêmes scripts jetables ; « Olympia » prononcé à la française =
+`ff_siwis`/`fr-fr` collé devant une suite anglaise `af_heart` ; proxy
+d'accent fort = texte anglais passé au phonémiseur français, caricature
+volontaire ; proxy d'accent léger = voix française, phonèmes anglais) :**
+
+| Cas | Zipformer **anglais** | Zipformer **français** (moteur actuel) | Whisper `en` |
+|---|---|---|---|
+| « Olympia » à la française + suite anglaise (24 clips) | PIERRE / LAMPIERRE — **0/24 éveil** | OLIMPIA — **20/20 éveil**, suite anglaise muette (MUSIC, K) | « Olympia, … » **24/24** |
+| … + « stop. » / « hush. » à l'anglaise | STOP / HUSH décodés (raw stop OK) | STAPE / vide — **raw stop raté** | « Olympia, stop. » 24/24 |
+| Phrase entière, accent fort (proxy) | PIERRE IN WHAT TIME IS IT FRE… | OLYMPIA (éveil 2/3) | « Olympia, a new time is it for. » — nom 4/4, sens ~1 fois sur 2 |
+| Phrase entière, accent léger (proxy) | OLYMPIA WHAT TIME IS IT | OLYMPIA (éveil 1/3, stop 0/2) | quasi parfait (« Olympia Stamp. » 1/4) |
+| Franglais (« what is the météo », « a minuteur of five minutes ») | — | — | « made AO », « minute tour » sans indice ; **météo/minuteur corrects 4/4** avec les mots français dans le prompt ; lumière/volets/chambre restent anglicisés (Lumiere, violets, chamber) |
+
+- **Renversement de la recommandation précédente** : en mode anglais le
+  zipformer **français reste le canal d'éveil brut** — c'est lui qui entend
+  « Olympia » prononcé à la française, ce que la famille fera. Le zipformer
+  anglais ne remplace pas, il **s'ajoute** (OU des deux canaux bruts) pour
+  la prononciation anglicisée et surtout pour le **stop brut en anglais**
+  (« stop », « hush ») que le français n'entend pas. Deux décodeurs sur le
+  même flux : ~70 ms chacun par énoncé, un thread chacun, +220 Mo. Sans le
+  second moteur, « Olympia chut » continue de marcher (mot français) et
+  « Olympia stop » passe par Whisper (24/24) avec la latence Whisper.
+- **Prompt Whisper anglais** : y mettre les mots français attendus (météo,
+  minuteur, cuisine, salon, chambre, volets, lumière, noms de lieux) —
+  gain net sur météo/minuteur, sans effet sur les autres ; le LLM absorbe
+  « Lumiere »/« chamber ».
+- **LLM comme « écouteur bienveillant »** (qwen3.6, prompt anglais dédié,
+  3 outils factices, temp 0,2, `reasoning_effort:none`) : intention
+  retrouvée sur « made AO » → météo, « free kitchen » → musique cuisine,
+  « fromage » → cheese, « explain me the word weather » → définition A2 ;
+  charabia complet → « I do not understand. Please say what you need. »
+  (demande plutôt que devine : bon). **Alerte** : 2/9 « I will set a
+  timer for five minutes. » **sans appel d'outil** (« minute tour »,
+  « pu a end time ») et une ville inventée (« Paris ») sans lieu donné —
+  prompt minimal et outils factices, donc non concluant, mais c'est
+  exactement la faille tool-call déjà mesurée le 14/08 : **à passer sur
+  `tools/probe_tool_call.py` avec les vrais schémas avant mise en service.**
+- **Leviers du profil `en` pour des apprenants** (à trancher à
+  l'implémentation) : `stop_secs` VAD 0,8 → 1,0–1,2 s (les hésitations
+  coupent la phrase en deux tours ; coût : +0,2–0,4 s de latence par tour,
+  seulement en anglais) ; vitesse Kokoro 0,9 (paramètre `speed`, à patcher
+  dans le service pipecat qui la fixe à 1,0) ; prompt : vocabulaire A2/B1,
+  jamais de correction non demandée, une seule question courte si ambigu ;
+  mode « coach » opt-in à la voix (« Olympia, correct me ») qui ajoute une
+  reformulation d'une ligne. Enfants : Whisper est plus faible sur les
+  voix d'enfants, à observer dans `transcripts.db`.
+
+### Implémentation du 06/09 : mode anglais livré
+
+**Architecture retenue** (option 1 de l'analyse) : `lang_profile.py`,
+dataclass `LangProfile` + deux instances `FR`/`EN` + `PROFILES`/`get()`.
+Le dashboard envoie `lang` dans le body de `/api/offer` (toggle FR/EN,
+`localStorage.merlin_lang`, reconnexion si on bascule en cours de session) ;
+`run_bot(connection, lang)` construit toute la session à partir du profil.
+Valeur inconnue → français (jamais d'échec de connexion sur un drapeau).
+
+- **Chemin français inchangé** : les constantes de `voice_guard.py`
+  (`WAKE_EXCLUDE`, `STOP_WORDS`, `CLOSER_*`, `_BLOCK_MARKERS`) pointent sur
+  le profil `fr` ; les fonctions gardent leur signature avec ces défauts ;
+  `GateCore`/`GuardedWhisperSTT` prennent `profile=` (défaut `FR`). Les 12
+  tests historiques passent sans modification.
+- **Éveil brut** : `wake_word.ENGINES` = spécifications par langue (modèle,
+  regex d'exclusion, regex de stop). `WakeWordDetector(langs=…)` fait tourner
+  plusieurs décodeurs sur le même flux (thread unique, ~70 ms/énoncé
+  chacun) ; un éveil ou un stop entendu par **n'importe lequel** compte.
+  Profil `en` = `("fr", "en")` — mesuré en prod : sur « Olympia, what time
+  is it? » natif, le fr décode OLIMPIA WAT et le en OLYMPIA WHAT TIME (les
+  deux tirent) ; sur le nom à la française + suite anglaise, seul le fr
+  tire (OLIMPIA KEN). Le stop anglais passe par la fenêtre
+  `STOP_AFTER_WAKE_SECS` (éveil tiré par le fr, mot de stop par le en).
+  Modèle anglais `sherpa-onnx-streaming-zipformer-en-2023-06-26` : après
+  téléchargement (~340 Mo) on ne garde que les fichiers int8 (68 Mo).
+- **Exclusions anglaises** : brut `ol[iy]mp[iy]a[dn]` (olympiad, olympian) ;
+  transcription {olympian(s), olympus, olympic(s), olympiad(s), olympe}.
+  Stop anglais : stop, hush(ed), quiet, shut (+ « chut » côté transcription
+  pour l'habitude familiale). Clôtures : thanks/thank/bye/goodbye/goodnight.
+  Hallucinations : « thank you for watching », « subtitles by », « please
+  subscribe », amara.
+- **Whisper `en`** : prompt sans le nom (biais « limpid pool »), avec les
+  mots français attendus (météo, minuteur, cuisine, salon, chambre, volets,
+  lumière) et les lieux. `stt_vocab.txt` reste ajouté dans les deux langues
+  (noms propres).
+- **LLM** : prompt anglais « écouteur bienveillant » (intention avant forme,
+  jamais de correction non demandée, une seule question courte si ambigu,
+  vocabulaire A2/B1, mêmes règles outils que le français). Date en anglais.
+  Note interne « skill prêt » traduite.
+- **TTS** : `af_heart`/`en-us` (env `MERLIN_TTS_VOICE_EN` ; un nom en `b…`
+  bascule sur `en-gb`). `MERLIN_TTS_SPEED_EN` (défaut 1,0 — non testé à
+  l'oreille) patche `create_stream` que pipecat fige à 1,0.
+- **VAD** : `stop_secs` 1,0 en anglais (env `MERLIN_VAD_STOP_SECS_EN`),
+  0,8 inchangé en français.
+- **Plugins** : 4 phrases-pont via `lang_profile.phrase(key, params.llm)`
+  (`run_bot` pose `llm.merlin_lang`). Descriptions/noms d'outils laissés en
+  français — le probe bout-en-bout a appelé la météo depuis une demande
+  anglaise (2 runs LLM, réponse anglaise). `SilentTurnTTSFilter` coupe bien
+  « Let me check. » en mode silencieux.
+- **transcripts.db** : colonne `lang` (migration in-place, NULL pour
+  l'existant) — le jeu STT se filtre par langue.
+- **Tests** : `test_voice_guard` 13/13 (nouveau `test_english_profile`),
+  `test_wake_word` 8/8 (matchers en ; moteur en seul : éveil 4/4, 0 faux/4 ;
+  fr+en : éveil 3/3 dont nom à la française, 0 faux/3, stop 2/3 — le raté
+  est « Olympia, hush » nom à la française ; 0 faux stop),
+  `test_transcript_store` 3/3, `test_dashboard_api`, plugins. Probe RTVI :
+  session `en` transcrit « Olympia, what time is it? », gate → « voix
+  ambiguë » (voix synthétique, attendu), chat `en` → météo Bordeaux par
+  outil en anglais ; session `fr` régression OK.
+- **Incident de déploiement** : le `kickstart` a coupé une session
+  téléphone active (log 11:15 : conversation familiale en cours, hors
+  attention). Règle ajoutée dans CLAUDE.md : lire `connections` sur
+  `/api/health` avant tout restart.
+- **Non fait / à valider** (roadmap « Fonctionnalités ») : capture d'éval
+  locuteur en anglais, banc tool-call anglais, session réelle avec
+  `MERLIN_WAKE_DEBUG=1`, vitesse/voix TTS à l'oreille.

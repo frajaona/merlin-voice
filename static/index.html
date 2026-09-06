@@ -127,6 +127,15 @@
       padding: 7px 18px; border-radius: 20px; cursor: pointer; font-size: 0.8rem;
     }
     #voice-buttons { display: flex; gap: 10px; }
+    /* Session language (FR/EN): applied at the next connection — one
+       language per session, the pipeline is built for it at connect time. */
+    #lang-toggle { display: flex; border: 1px solid var(--border); border-radius: 20px; overflow: hidden; }
+    #lang-toggle button {
+      background: transparent; border: none; color: var(--muted);
+      padding: 5px 14px; cursor: pointer; font-size: 0.78rem; letter-spacing: 0.04em;
+    }
+    #lang-toggle button.on { background: var(--blue, #4a90d9); color: #fff; }
+    #lang-toggle button:disabled { cursor: default; opacity: 0.7; }
     audio { display: none; }
 
     /* ---- conversation ---- */
@@ -286,6 +295,10 @@
     <section id="panel-voice">
       <div id="orb">🎙</div>
       <div id="status">Appuie pour te connecter</div>
+      <div id="lang-toggle" title="Langue de la session (appliquée à la connexion)">
+        <button type="button" data-lang="fr">FR</button>
+        <button type="button" data-lang="en">EN</button>
+      </div>
       <div id="voice-buttons">
         <button id="btn-stop" title="Coupe et passe en mode privé (comme « Olympia, chut »)">🤫 Chut</button>
         <button id="btn-resume" title="Sort du mode privé (« Olympia, tu es là ? » en HTTP)">🔔 Réveiller</button>
@@ -438,6 +451,30 @@
       }
     });
 
+    // ---- session language ---------------------------------------------------
+    // One language per session (French or English, never both): sent in the
+    // /api/offer body, the server builds the whole pipeline for it. Changing
+    // it while connected reconnects.
+    let lang = localStorage.getItem('merlin_lang') === 'en' ? 'en' : 'fr';
+    const langButtons = [...document.querySelectorAll('#lang-toggle button')];
+    function renderLang() {
+      langButtons.forEach(b => b.classList.toggle('on', b.dataset.lang === lang));
+    }
+    renderLang();
+    langButtons.forEach(b => b.addEventListener('click', async () => {
+      if (b.dataset.lang === lang) return;
+      lang = b.dataset.lang;
+      localStorage.setItem('merlin_lang', lang);
+      renderLang();
+      if (connected) {
+        disconnect();
+        setStatus(lang === 'en' ? 'Switching to English…' : 'Passage en français…', true);
+        await connect();
+      }
+    }));
+    const idleStatus = () => lang === 'en' ? 'Tap to connect' : 'Appuie pour te connecter';
+    const liveStatus = () => lang === 'en' ? 'Connected — speak now' : 'Connecté — parle maintenant';
+
     // ---- WebRTC + RTVI -----------------------------------------------------
     let pc = null, pcId = null, dc = null, connected = false, pingTimer = null;
 
@@ -512,7 +549,7 @@
         const resp = await fetch('/api/offer', {
           method: 'POST',
           headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, pc_id: pcId }),
+          body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, pc_id: pcId, lang }),
         });
         if (resp.status === 401) {
           disconnect();
@@ -526,7 +563,7 @@
         connected = true;
         connDot.classList.add('on');
         btnDisconnect.style.display = 'block';
-        setStatus('Connecté — parle maintenant', true);
+        setStatus(liveStatus(), true);
         setOrb('listening');
         setChatEnabled(true);
       } catch (err) {
@@ -545,7 +582,7 @@
       pcId = null;
       connDot.classList.remove('on');
       btnDisconnect.style.display = 'none';
-      setStatus('Appuie pour te connecter');
+      setStatus(idleStatus());
       orb.className = '';
       orb.textContent = '🎙';
       botBubble = null;
@@ -569,7 +606,7 @@
       const d = msg.data || {};
       switch (msg.type) {
         case 'bot-ready':
-          setStatus('Connecté — parle maintenant', true);
+          setStatus(liveStatus(), true);
           break;
         case 'user-started-speaking': orb.classList.add('user-speaking'); break;
         case 'user-stopped-speaking': orb.classList.remove('user-speaking'); break;

@@ -3,6 +3,9 @@ import importlib.util
 import sys
 from pathlib import Path
 
+# The plugin imports lang_profile from the repo root (bot.py runs from there).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 # Pour mocker les types de pipecat sans nécessiter toute la librairie si besoin,
 # mais on suppose qu'ils sont installés via le venv (comme requis par l'import du plugin).
 

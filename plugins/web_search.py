@@ -6,6 +6,8 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.services.llm_service import FunctionCallParams
 
+from lang_profile import phrase
+
 SCHEMA = FunctionSchema(
     name="web_search",
     description=(
@@ -57,7 +59,7 @@ async def handler(params: FunctionCallParams):
     search_type = params.arguments.get("type", "general")
     logger.info(f"web_search ({search_type}): [{query}]")
     # Fill the dead air while the search runs.
-    await params.llm.push_frame(TTSSpeakFrame("Je regarde ça."))
+    await params.llm.push_frame(TTSSpeakFrame(phrase("looking", params.llm)))
     try:
         results = await asyncio.to_thread(_ddg_search, query, search_type)
         if not results:

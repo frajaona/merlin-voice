@@ -11,7 +11,10 @@ Usage (bot must be running): venv/bin/python tools/probe_rtvi.py [speech.wav | "
 - any other string: sends it as a typed chat message (RTVI send-text,
   audio_response=false) and expects a silent bot-llm-text reply
 A test utterance: say -v Thomas "Olympia, quelle heure est-il ?" -o /tmp/u.wav --data-format=LEI16@16000
+Session language: MERLIN_PROBE_LANG=en (default fr) — sent as `lang` in the
+offer body, like the dashboard toggle.
 """
+import os
 import asyncio
 import fractions
 import json
@@ -117,7 +120,10 @@ async def main():
     ctx.verify_mode = ssl.CERT_NONE
     req = urllib.request.Request(
         BASE + "/api/offer",
-        data=json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}).encode(),
+        data=json.dumps({
+            "sdp": pc.localDescription.sdp, "type": pc.localDescription.type,
+            "lang": os.getenv("MERLIN_PROBE_LANG", "fr"),
+        }).encode(),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
     )
     answer = json.loads(urllib.request.urlopen(req, context=ctx).read())

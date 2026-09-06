@@ -563,6 +563,74 @@ def test_ambiguous_attribution_drops():
     print("ok: attribution ambiguë -> drop (aucun nom posé), voix franche passe")
 
 
+def test_english_profile():
+    """The `en` profile swaps the word lists; the French defaults are untouched."""
+    import lang_profile
+    from voice_guard import STOP_REASON, has_stop_word, is_polite_closer, is_wake_word
+
+    en = lang_profile.EN
+    # Wake: "Olympian" contains "olympia" — excluded in English only.
+    assert is_wake_word("olympia", en.wake_exclude)
+    assert is_wake_word("olympia")
+    for w in ("olympian", "olympians", "olympics", "olympic", "olympus", "olympiad"):
+        assert not is_wake_word(w, en.wake_exclude), w
+    assert is_wake_word("olympian")  # French default list has no English words — by design
+    assert not is_wake_word("olympien")  # …and still excludes its own
+    # Stop words.
+    assert has_stop_word(normalize_words("Olympia, hush."), en.stop_words)
+    assert has_stop_word(normalize_words("Olympia, stop!"), en.stop_words)
+    assert has_stop_word(normalize_words("Olympia chut"), en.stop_words)  # family habit
+    assert not has_stop_word(normalize_words("Olympia, hush."))  # not French
+    assert not has_stop_word(normalize_words("Olympia stopped the music."), en.stop_words)
+    # Polite closers.
+    for text in ("Thank you very much Olympia", "OK bye!", "Thanks, goodnight.", "Thank you"):
+        assert is_polite_closer(normalize_words(text), en.closer_core, en.closer_filler), text
+    for text in ("Thank you, what time is it?", "ok", "yes", "Merci Olympia"):
+        assert not is_polite_closer(normalize_words(text), en.closer_core, en.closer_filler), text
+    assert not is_polite_closer(normalize_words("Thank you very much"))  # French list
+    # Hallucination markers.
+    assert looks_hallucinated("Thank you for watching!", en.hallucination_markers)
+    assert looks_hallucinated("Subtitles by the Amara.org community", en.hallucination_markers)
+    assert looks_hallucinated("What is the weather today?", en.hallucination_markers) is None
+    assert looks_hallucinated("Thank you.", en.hallucination_markers) is None
+    assert looks_hallucinated("Thank you for watching!") is None  # French list
+
+    # GateCore driven by the English profile.
+    clock = FakeClock()
+    fred = unit(1)
+    with tempfile.TemporaryDirectory() as tmp:
+        household = make_household(tmp)
+        household.finish_enrollment()
+        enroll_voice(household, "fred", fred, 100)
+        core = make_core(household, clock, profile=en)
+
+        ok, reason = core.evaluate("Olympia, what time is it?", near(fred, 900), 1.6)
+        assert ok, reason
+        assert core.activator == "fred"
+        # Closer in English ends the exchange.
+        ok, reason = core.evaluate("Thank you very much.", near(fred, 901), 1.2)
+        assert not ok and "clôture polie (échange fermé)" == reason, reason
+        assert core.activator is None
+        # "Olympian" is not a wake in English (it would be with the French list).
+        clock.t += 100
+        ok, reason = core.evaluate("An Olympian athlete won gold.", near(fred, 902), 1.6)
+        assert not ok and "hors attention" in reason, reason
+        core_fr = make_core(household, clock)
+        ok, _ = core_fr.evaluate("An Olympian athlete won gold.", near(fred, 902), 1.6)
+        assert ok  # French profile: prefix match, no English exclusion — expected
+        # English stop phrase → privacy hold.
+        clock.t += 100
+        ok, _ = core.evaluate("Olympia, can you hear me?", near(fred, 903), 1.6)
+        assert ok
+        ok, reason = core.evaluate("Olympia, hush.", near(fred, 904), 1.0)
+        assert not ok and reason == STOP_REASON and core.on_hold, reason
+        ok, reason = core.evaluate("What time is it?", near(fred, 905), 1.4)
+        assert not ok and core.on_hold
+        ok, reason = core.evaluate("Olympia, are you there?", near(fred, 906), 1.6)
+        assert ok and not core.on_hold, reason
+    print("ok: english profile")
+
+
 if __name__ == "__main__":
     test_hallucination_filters()
     test_owner_enrollment_flow()
@@ -576,4 +644,5 @@ if __name__ == "__main__":
     test_topup_rolling_cap_and_stale_marker()
     test_adaptation_guards()
     test_ambiguous_attribution_drops()
+    test_english_profile()
     print("all voice_guard tests passed")

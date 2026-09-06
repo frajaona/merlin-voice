@@ -5,6 +5,8 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.services.llm_service import FunctionCallParams
 
+from lang_profile import phrase
+
 SCHEMA = FunctionSchema(
     name="mettre_un_minuteur",
     description=(
@@ -31,7 +33,7 @@ async def _timer_task(duration: int, llm):
     await asyncio.sleep(duration)
     logger.info(f"Minuteur de {duration} secondes terminé.")
     try:
-        await llm.push_frame(TTSSpeakFrame("C'est l'heure ! Le minuteur est terminé."))
+        await llm.push_frame(TTSSpeakFrame(phrase("timer_done", llm)))
     except Exception as e:
         # Session may have ended before the timer fired.
         logger.warning(f"minuteur terminé mais impossible de parler: {e}")
