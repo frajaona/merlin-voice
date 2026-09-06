@@ -388,6 +388,23 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
     Wyoming/satellite dans bot.py pour que voice_guard garde l'audio brut.
     Nouveau micro = nouveau canal → top-up du profil sur ce micro requis.
 
+15. **Client natif iOS/iPadOS (lead PARQUÉ le 06/09)** : gains réels mais
+    étroits — capture micro écran verrouillé/app en fond garantie (mode audio
+    background + AVAudioSession voice-chat), maîtrise de la session audio
+    (route haut-parleur/Bluetooth, AGC off, AEC matériel), PCM brut 16 kHz
+    au lieu d'Opus traité par Safari, reconnexion/kiosque/pinning du cert.
+    Ne touche AUCUN plafond du roadmap (faux rejets en musique, parole
+    simultanée, latence LLM — tout est côté Mac) ; l'AEC n'annule que le
+    TTS du téléphone, pas le Sonos. Coûts : Swift + pile WebRTC (SDK iOS
+    Pipecat à vérifier contre SmallWebRTC), signature (7 jours sans compte
+    payant), second code à maintenir, et **nouveau canal acoustique** →
+    top-up des profils + re-mesure des seuils. À faire d'abord et à moindre
+    coût : tester ce que fait Safari à l'écran verrouillé en session, ajouter
+    l'auto-reconnexion au client web (aujourd'hui ICE `disconnected` →
+    `disconnect()` sans retry). Rouvrir seulement si « iPad posé, écran
+    éteint » devient le mode d'usage principal. Voir `docs/DECISIONS.md`
+    2026-09-06.
+
 ## À faire — reliquat de la revue du 13/08 (« The Merlin Review »)
 
 Vérifié le 14/08 : ces points de la revue sont toujours ouverts.

@@ -1506,3 +1506,40 @@ scripts jetables — les phrases sont dans `tools/test_wake_word.py`) :**
   éteindre) : voyelle d'attaque (« Aulympia » ?), nasale (« Olinpia » ?),
   et « Olympia » dit vite en fin de phrase. Re-caler `_WAKE_RE` seulement
   sur ces décodages réels.
+
+## 2026-09-06 — Client natif iOS/iPadOS : lead parqué
+
+Question de Fred : une app native apporterait-elle une meilleure intégration
+que le navigateur du téléphone ? Réponse : oui sur des points étroits, non
+sur les plafonds réels. Parqué d'un commun accord.
+
+- **Ce qu'une app apporterait** : capture micro et lecture maintenues écran
+  verrouillé / app en arrière-plan (mode audio background, AVAudioSession
+  `.voiceChat`) — comportement de Safari version-dépendant et non maîtrisé ;
+  contrôle de la route audio (haut-parleur forcé, Bluetooth), AGC
+  désactivable, AEC/NS matériels ou contournés ; flux PCM brut 16 kHz par
+  WebSocket au lieu d'Opus après traitement Safari ; reconnexion sur
+  changement réseau, lancement au boot, Accès guidé, pinning du certificat
+  auto-signé ; bouton Action / raccourci Siri pour « chut » (déjà possible
+  sans app : `POST /api/stop` depuis Raccourcis).
+- **Ce qu'elle n'apporterait pas** : rien sur l'attribution locuteur en
+  bruit, les hallucinations Whisper, le plafond « musique », la latence LLM
+  — tout est sur le Mac. L'AEC matériel n'annule que le TTS du téléphone
+  (signal de référence connu), pas la musique Sonos (source externe, voir
+  item 14 du roadmap). Déplacer l'éveil sur l'appareil défendrait le design
+  « canal brut + Whisper » re-mesuré le jour même, sans gain privacy sur un
+  système LAN-only.
+- **Coûts** : Swift/SwiftUI + pile WebRTC (Pipecat publie un SDK iOS RTVI —
+  vérifier le transport disponible face à SmallWebRTC avant de supposer un
+  drop-in) ; signature (build sideloadé expire en 7 jours sans compte
+  développeur payant) ; second code à tenir en phase avec le dashboard et les
+  événements RTVI ; **nouveau canal acoustique** = même règle qu'un nouveau
+  micro (item 14) : top-up des profils et re-mesure des seuils TitaNet-L.
+- **Décision** : ne pas construire. Étapes préalables à moindre coût si le
+  besoin revient : (1) test de 10 min de ce que fait Safari quand le
+  téléphone se verrouille en pleine session ; (2) auto-reconnexion dans
+  `static/index.html` (aujourd'hui `iceConnectionState` disconnected/failed
+  → `disconnect()` sans retry). Si l'objectif est une station cuisine
+  permanente, le levier est le micro dédié HA Voice PE (item 14), pas une
+  app. Rouvrir seulement si « iPad posé, écran éteint » devient le mode
+  d'usage principal du foyer.
