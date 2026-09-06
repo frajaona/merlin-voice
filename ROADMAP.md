@@ -455,10 +455,13 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 ### Fonctionnalités
 
 - **Mode anglais — validation avant usage familial** (implémenté le 06/09,
-  voir « Fait ») : (1) `tools/eval_capture.py` sur un script de 20 phrases
-  **anglaises** (Fred + Camille) — profils inscrits en français, TitaNet-L
-  réputé peu sensible à la langue mais à mesurer ; si sims propres < 0,45,
-  top-up avec des énoncés anglais ; (2) `tools/probe_tool_call.py` en anglais
+  voir « Fait ») : (1) ~~capture d'éval anglaise~~ **faite pour Fred le
+  06/09** (`eval_capture.py start <nom> en` + `eval_speaker_lang.py`) :
+  −0,11 de médiane, 16/20 acceptés, rejets = ordres courts ; simulation →
+  **top-up de 8 énoncés anglais** rétablit 12/12 sans toucher au français
+  (`docs/DECISIONS.md`). Reste : appliquer le top-up (`voice_profile.py
+  enroll fred`, dashboard EN), puis même capture + simulation pour
+  Camille ; (2) `tools/probe_tool_call.py` en anglais
   d'apprenant contre les vrais schémas (le probe minimal a donné 2/9 « I will
   set a timer » sans appel d'outil) ; (3) une session réelle
   `MERLIN_WAKE_DEBUG=1` en anglais (prononciation du nom par la famille,

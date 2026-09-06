@@ -1,9 +1,17 @@
 """Toggle de la capture du jeu d'éval locuteur (data/speaker-eval/).
 
 Usage :
-  venv/bin/python tools/eval_capture.py start <nom>   # capture ON pour <nom>
+  venv/bin/python tools/eval_capture.py start <nom>      # capture ON pour <nom> (script français)
+  venv/bin/python tools/eval_capture.py start <nom> en   # script ANGLAIS, capturé sous <nom>-en/
   venv/bin/python tools/eval_capture.py stop
   venv/bin/python tools/eval_capture.py status
+
+Variante anglaise (2026-09-06) : mêmes conditions, phrases anglaises simples ;
+le dashboard doit être connecté en mode EN (Whisper anglais, même canal que
+la prod anglaise). Les clips vont dans <nom>-en/ pour laisser intact le jeu
+français de référence ; tools/eval_speaker_lang.py les score contre les
+profils inscrits (en français) — c'est la mesure « la gate tient-elle quand
+on parle anglais ? ».
 
 Tant que la capture est ON, chaque énoncé accepté par le STT du bot (même
 canal que la prod : téléphone → WebRTC → VAD) est archivé en wav 16 k mono
@@ -72,6 +80,53 @@ Assis(e), voix relâchée de fin de journée :
 
 Puis : venv/bin/python tools/eval_capture.py stop"""
 
+EVAL_SCRIPT_EN = """\
+English eval script — 20 sentences, alone, QUIET room (no music). Dashboard
+in EN mode (tap EN before connecting). No need to say "Olympia" or to wait
+for an answer: everything is recorded. Small pause (~1 s) between sentences.
+The CONDITION matters more than the words — read naturally, your own accent.
+
+1 m from the phone, normal voice:
+ 1. Hello, I am recording my voice for the house.
+ 2. The train at three forty leaves from platform number two.
+ 3. There are three apples, two pears and a kilo of cherries in the basket.
+ 4. Every Saturday morning we go to the village market to buy cheese.
+
+Still at 1 m, one LONG sentence in one breath:
+ 5. When the holidays come, we load the car very early in the morning
+    to avoid the traffic, and we stop at noon for a picnic.
+
+At 2–3 metres, normal voice:
+ 6. The light in the hallway stayed on all night.
+ 7. Has anyone seen my keys and my wallet?
+ 8. The heating starts at half past six in winter.
+
+From the other side of the room, a bit LOUDER:
+ 9. Dinner is ready, everybody to the table!
+10. Don't forget to close the shutters before you leave.
+
+SOFT voice, as if someone were sleeping nearby:
+11. It's late, we will talk about all this tomorrow morning.
+12. Turn off the small lamp when you go up to bed.
+
+Question, RISING intonation:
+13. Do you think the weather will be nice for the hike on Sunday?
+14. Shall we invite the neighbours for a drink on Friday evening?
+
+COMMAND tone, short and dry:
+15. Turn on the kitchen light.
+16. Turn down the volume in the living room.
+17. Set a timer for ten minutes.
+
+WALKING around the room, back to the phone at times:
+18. I am putting away the shopping while the pasta water heats up.
+19. The dryer has been making a strange noise since this morning.
+
+Sitting, relaxed end-of-day voice:
+20. That's it, this is the last sentence, the recording is finished.
+
+Then: venv/bin/python tools/eval_capture.py stop"""
+
 
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
@@ -79,12 +134,15 @@ def main():
         if len(sys.argv) < 3:
             sys.exit("usage: eval_capture.py start <nom>")
         name = sys.argv[2].strip().lower()
+        english = len(sys.argv) > 3 and sys.argv[3].strip().lower() == "en"
+        label = f"{name}-en" if english else name
+        script = EVAL_SCRIPT_EN if english else EVAL_SCRIPT
         CAPTURE.parent.mkdir(parents=True, exist_ok=True)
-        CAPTURE.write_text(name, encoding="utf-8")
-        print(f"capture ON pour '{name}'\n")
-        print(EVAL_SCRIPT)
+        CAPTURE.write_text(label, encoding="utf-8")
+        print(f"capture ON pour '{label}'\n")
+        print(script)
         # Push sur le téléphone (Telegram, best-effort) pour lire en bougeant.
-        result = notify.send(f"Olympia — éval voix pour {name}.\n\n{EVAL_SCRIPT}")
+        result = notify.send(f"Olympia — éval voix pour {label}.\n\n{script}")
         print(f"\n(script envoyé sur le téléphone : {result})")
     elif cmd == "stop":
         CAPTURE.unlink(missing_ok=True)

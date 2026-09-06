@@ -1765,3 +1765,58 @@ Valeur inconnue → français (jamais d'échec de connexion sur un drapeau).
 - **Non fait / à valider** (roadmap « Fonctionnalités ») : capture d'éval
   locuteur en anglais, banc tool-call anglais, session réelle avec
   `MERLIN_WAKE_DEBUG=1`, vitesse/voix TTS à l'oreille.
+
+### Éval locuteur en anglais — Fred (06/09, après-midi)
+
+**Protocole** : `tools/eval_capture.py start fred en` (nouveau script
+anglais, mêmes 10 conditions), dashboard en mode EN, pièce calme, 20 clips
+sous `data/speaker-eval/fred-en/`. Scoring par `tools/eval_speaker_lang.py`
+(nouveau) : chaque clip contre les profils **inscrits** avec le scoring du
+gate (top-3, seuil 0,45, marge 0,15). Référence = les 24 clips français du
+22/08 rejoués contre le même profil.
+
+| Fred, contre son profil (inscrit en français) | self min / p10 / médiane | cross max (camille) | verdict gate |
+|---|---|---|---|
+| 24 clips **français** (référence) | 0,21 / 0,34 / 0,69 | 0,37 | 21/24 (3 rejets : « Merci. » 1,9 s et deux clips hors script) |
+| 20 clips **anglais** | 0,37 / 0,43 / 0,58 | 0,25 | **16/20** (4 rejets) |
+
+- **Baisse cross-lingue confirmée : ≈ −0,11 de médiane.** Les 4 rejets
+  anglais sont les **ordres courts et secs** (« Turn on the kitchen light »
+  0,44, « Turn down the volume » 0,37, « Set the timer » 0,42) et la voix
+  douce (« Turn off the small lamp » 0,43) — 2,9–3,9 s, exactement les
+  énoncés utiles d'un assistant. Les phrases longues tiennent (0,55–0,69).
+- **Aucun risque côté fausses acceptations** : cross max 0,25 en anglais
+  (0,37 en français), 0 clip plus proche de camille. La perte est 100 % en
+  faux rejets, comme prédit.
+- **Simulation top-up (copies dans le tmp, profils réels intacts)** :
+  ajouter 8 clips anglais au profil (cap glissant 24 → 8 plus vieux
+  embeddings français évincés) puis tester sur les 12 clips anglais
+  restants et les 24 français :
+
+| Profil | EN held-out : self min / p10 / médiane, acceptés | FR : médiane, acceptés | camille vs profil fred : max |
+|---|---|---|---|
+| actuel | 0,37 / 0,43 / 0,58 — 16/20 | 0,69 — 21/24 | 0,30 |
+| + 8 EN (1 clip sur 2) | **0,56 / 0,59 / 0,70 — 12/12** | 0,63 — **21/24** | 0,29 |
+| + 12 EN | 0,54 / 0,55 / 0,69 — 8/8 | 0,63 — 21/24 | 0,28 |
+| + 8 EN dont les 4 ordres rejetés | 0,61 / 0,63 / 0,69 — 12/12 | 0,62 — 20/24 | 0,29 |
+
+- **Décision proposée** : top-up de **8 énoncés anglais** par le chemin
+  normal (`tools/voice_profile.py enroll fred`, dashboard en EN, phrases
+  variées dont des ordres courts) — le français ne bouge pas (21/24), la
+  marge vis-à-vis de camille s'améliore même. 12 n'apporte rien de plus.
+  Pas de changement de seuil (le seuil est calibré, la donnée dit que
+  c'est le profil qui manque de diversité, pas le seuil qui est trop haut).
+  **À faire pour chaque membre** qui parlera anglais (camille : même
+  capture, même simulation avant top-up).
+- **Whisper `en` sur accent réel (bonus, transcripts des 20 clips)** :
+  sens intact sur ~15/20 ; dérives : « leaves » → « leads », « very
+  early » → « they will early », « stayed on all night » → « stayed upon a
+  night », « in winter » → « minutes », « Turn off » → « Turn up », « Shall
+  we » → « So we ». Le nombre en chiffres (« 3 apples », « 340 ») est
+  normal. La consigne « écouteur bienveillant » du prompt LLM est donc
+  nécessaire ; à confirmer sur le banc tool-call anglais (« Turn up the
+  small lamp » est le cas piège : sens inversé, l'outil HA agirait à
+  l'envers — un LLM ne peut pas le rattraper).
+- Effet de bord observé : `stop_secs` 1,0 a **collé les phrases 1 et 2**
+  dans un seul clip (pause de Fred < 1 s) — sans conséquence ici ; en usage
+  réel c'est le compromis attendu (hésitations vs. deux phrases collées).
