@@ -3,7 +3,8 @@
 Local French voice assistant: Pipecat pipeline (WebRTC ← phone browser) →
 Silero VAD → MLX Whisper (fp16 turbo) → Ollama (qwen, `reasoning_effort:"none"`)
 → Kokoro TTS. Public-use hardening in `voice_guard.py` (household speaker gate,
-attention gate with activator binding, stop phrase "Merlin chut/stop" → privacy
+attention gate with activator binding, wake word "Olympia" (was "Merlin"
+until 2026-09-06), stop phrase "Olympia chut/stop" → privacy
 hold) and `wake_word.py` (raw-audio wake-word + stop-phrase engine). Tool
 plugins auto-load from `plugins/*.py`.
 
@@ -36,7 +37,7 @@ plugins auto-load from `plugins/*.py`.
 - Dashboard: `https://<host>:7860/` (vanilla JS, RTVI sur le data channel).
   Auth : Bearer token (`data/auth-token` ou `MERLIN_TOKEN`) exigé sur
   `/api/offer`, `/api/workshop*` et `/api/stop` (`dashboard_api.py`).
-  `POST /api/stop {"speaker": "<nom>"}` = « Merlin chut » en HTTP, scopé :
+  `POST /api/stop {"speaker": "<nom>"}` = « Olympia chut » en HTTP, scopé :
   met en mode privé les sessions dont cette personne inscrite est
   l'activateur (bouton « 🤫 Chut » du dashboard → activateur courant).
   Sonde protocole : `tools/probe_rtvi.py` (bot lancé requis).
@@ -52,7 +53,7 @@ plugins auto-load from `plugins/*.py`.
   filter them; they double as the STT/gate tuning dataset. `speaker` column
   (2026-08-18): enrolled name the gate attributed the turn to, NULL when
   unknown (assistant rows, filtered turns, `[clavier]`, fail-open paths).
-  Exception: turns rejected during the privacy hold ("Merlin chut") are NOT
+  Exception: turns rejected during the privacy hold ("Olympia chut") are NOT
   stored at all — by design, do not "fix" this.
 - Voice profiles: `tools/voice_profile.py [status|enroll|cancel|reset]`
   (enroll on a complete profile opens a diversity top-up).

@@ -6,8 +6,8 @@ Usage:
     venv/bin/python tools/voice_profile.py cancel          # cancel pending enrollment
     venv/bin/python tools/voice_profile.py reset <name>    # delete a profile
 
-Enrollment: after `enroll <name>`, have that person chat with Merlin alone
-(wake word first: "Merlin, ..."). Their profile completes after 8 utterances;
+Enrollment: after `enroll <name>`, have that person chat with Olympia alone
+(wake word first: "Olympia, ..."). Their profile completes after 8 utterances;
 watch data/merlin.log for "inscription <name> N/8". No restart needed.
 `enroll` prints a guided script (ENROLL_SCRIPT): 8 French sentences, one
 acoustic condition each — vary distance/volume/prosody, not the words.
@@ -29,22 +29,22 @@ from voice_guard import ENROLL_TARGET, PENDING_PATH, VOICES_DIR, _normed_mean
 # 2026-08-14, the "marées" false reject) — hence one condition per line.
 ENROLL_SCRIPT = """\
 Script d'inscription — seul(e) dans la pièce, une phrase à la fois, attendre
-la réponse de Merlin. Redire « Merlin » si plus de ~10 s se sont écoulées
+la réponse de Olympia. Redire « Olympia » si plus de ~10 s se sont écoulées
 depuis sa réponse. Le contenu importe peu : ce sont les CONDITIONS qui
 comptent (distance, volume, intonation).
 
  1. À 1 m du téléphone, voix normale :
-    « Merlin, est-ce que tu m'entends bien ? »
+    « Olympia, est-ce que tu m'entends bien ? »
  2. Voix normale, phrase longue :
-    « Merlin, raconte-moi ce que tu sais faire dans la maison. »
+    « Olympia, raconte-moi ce que tu sais faire dans la maison. »
  3. À 2–3 mètres du téléphone :
-    « Merlin, quel temps va-t-il faire demain ? »
+    « Olympia, quel temps va-t-il faire demain ? »
  4. Voix douce, comme si quelqu'un dormait à côté :
-    « Merlin, parle moins fort, il est tard. »
+    « Olympia, parle moins fort, il est tard. »
  5. Question, intonation montante :
-    « Merlin, tu crois qu'il va pleuvoir ce week-end ? »
+    « Olympia, tu crois qu'il va pleuvoir ce week-end ? »
  6. Sur un ton d'ordre :
-    « Merlin, donne-moi une idée de repas pour ce soir. »
+    « Olympia, donne-moi une idée de repas pour ce soir. »
  7. Depuis l'endroit où on lui parle le plus souvent (cuisine) :
     « Qu'est-ce qu'on pourrait préparer avec des courgettes ? »
  8. En bougeant, dos au téléphone :
@@ -55,7 +55,7 @@ comptent (distance, volume, intonation).
 def _push_script(name: str, kind: str):
     # Push the script to the phone (Telegram, iMessage fallback) so the
     # person can read it while moving around the room. Best-effort.
-    result = notify.send(f"Merlin — {kind} ouverte pour {name}.\n\n{ENROLL_SCRIPT}")
+    result = notify.send(f"Olympia — {kind} ouverte pour {name}.\n\n{ENROLL_SCRIPT}")
     print(f"(script envoyé sur le téléphone : {result})")
 
 
@@ -81,7 +81,7 @@ def status():
         if len(parts) > 1:
             detail = f" (top-up, {parts[2] if len(parts) > 2 else 0} enrolled)"
         print(f"enrollment OPEN for '{parts[0]}'{detail} — "
-              "that person should chat with Merlin alone now")
+              "that person should chat with Olympia alone now")
 
 
 def main():
@@ -103,14 +103,14 @@ def main():
                 target = count + 8
                 PENDING_PATH.write_text(f"{name} {target}", encoding="utf-8")
                 print(f"top-up open for '{name}' ({count} -> {target}). Chat with "
-                      "Merlin ALONE, varying conditions — reuse the script below, "
+                      "Olympia ALONE, varying conditions — reuse the script below, "
                       "favoring the conditions the profile misses (distance, soft "
                       "voice, another room).\n")
                 print(ENROLL_SCRIPT)
                 _push_script(name, "inscription (top-up)")
                 return
         PENDING_PATH.write_text(name, encoding="utf-8")
-        print(f"enrollment open for '{name}'. Have them chat with Merlin alone "
+        print(f"enrollment open for '{name}'. Have them chat with Olympia alone "
               f"(start with the wake word). Completes after {ENROLL_TARGET} utterances.\n")
         print(ENROLL_SCRIPT)
         _push_script(name, "inscription")

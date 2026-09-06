@@ -3,7 +3,7 @@ Merlin Voice — conversational voice AI pipeline
 Pipecat + MLX Whisper + local LLM (Ollama direct, Hermes via env override) + Kokoro TTS
 
 Public-use hardening lives in voice_guard.py: speaker verification (only the
-owner's voice is answered), attention gating (wake word "Merlin" + follow-up
+owner's voice is answered), attention gating (wake word "Olympia" + follow-up
 window, so side-conversation is ignored) and Whisper hallucination filtering.
 """
 import asyncio
@@ -164,7 +164,7 @@ LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 MAX_HISTORY_MSGS = int(os.getenv("MERLIN_MAX_HISTORY_MSGS", "40"))
 TTS_VOICE = os.getenv("TTS_VOICE", "ff_siwis")
 
-SYSTEM_PROMPT = """Tu es Merlin, un assistant personnel intelligent et chaleureux. Tu réponds toujours en français et tu tutoies l'utilisateur.
+SYSTEM_PROMPT = """Tu es Olympia, une assistante personnelle intelligent et chaleureux. Tu réponds toujours en français et tu tutoies l'utilisateur.
 
 Règles importantes :
 - Tes réponses seront lues à voix haute — pas de markdown, pas d'astérisques, pas de puces, pas de symboles spéciaux.
@@ -515,7 +515,7 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection):
 
     # Speaker + attention gate: drops non-household voices and
     # side-conversation before they can start a turn, and binds each exchange
-    # to the person who woke Merlin (see voice_guard.py). The transcript
+    # to the person who woke Olympia (see voice_guard.py). The transcript
     # logger sits after it so accepted turns are logged clean; the gates log
     # their own rejections with a "[filtré: …]" prefix.
     wake_state = WakeState() if RAW_WAKE else None

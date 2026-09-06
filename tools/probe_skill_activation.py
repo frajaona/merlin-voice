@@ -1,6 +1,6 @@
 """Probe: voice-activate a workshop candidate mid-session, then use it.
 
-Sequence: connect -> ask Merlin to activate the timer skill (confirmed) ->
+Sequence: connect -> ask Olympia to activate the timer skill (confirmed) ->
 set a 5-second timer -> wait for the spoken timer announcement.
 """
 import asyncio

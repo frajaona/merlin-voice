@@ -59,7 +59,7 @@ def test_hallucination_filters():
     assert looks_hallucinated("Merci. Merci. Merci. Merci.") == "boucle de repetition"
     assert looks_hallucinated("Merci. Merci.") is None
     assert looks_hallucinated("Oui oui.") is None
-    assert normalize_words("Salut Merlin, ça va ?") == ["salut", "merlin", "ca", "va"]
+    assert normalize_words("Salut Olympia, ça va ?") == ["salut", "olympia", "ca", "va"]
     print("ok: hallucination filters")
 
 
@@ -93,13 +93,13 @@ def test_owner_enrollment_flow():
         assert household.pending_name() == "proprietaire"
         core = make_core(household, clock)
 
-        ok, why = core.evaluate("Salut Merlin comment ça va", near(fred, 10), 2.0)
+        ok, why = core.evaluate("Salut Olympia comment ça va", near(fred, 10), 2.0)
         assert ok and "inscription proprietaire" in why, why
         assert core.last_speaker == "proprietaire"
         n = 1
         while household.pending_name():
             clock.t += 5
-            ok, _ = core.evaluate("Merlin quelle est la météo demain", near(fred, 11 + n), 2.0)
+            ok, _ = core.evaluate("Olympia quelle est la météo demain", near(fred, 11 + n), 2.0)
             assert ok
             n += 1
         assert household.people["proprietaire"].complete
@@ -117,11 +117,11 @@ def test_activator_binding():
         core = make_core(household, clock)
 
         # Stranger can't activate, even with the wake word.
-        ok, why = core.evaluate("Merlin quelle heure est-il", near(stranger, 1), 2.0)
+        ok, why = core.evaluate("Olympia quelle heure est-il", near(stranger, 1), 2.0)
         assert not ok and "voix inconnue" in why, why
 
         # Fred activates and is bound.
-        ok, why = core.evaluate("Merlin quelle heure est-il", near(fred, 2), 2.0)
+        ok, why = core.evaluate("Olympia quelle heure est-il", near(fred, 2), 2.0)
         assert ok and "éveil par fred" in why, why
         assert core.activator == "fred"
         assert core.last_speaker == "fred"
@@ -139,7 +139,7 @@ def test_activator_binding():
 
         # Wife takes the mic with the wake word.
         clock.t += 2
-        ok, why = core.evaluate("Merlin et pour moi quel temps", near(wife, 5), 2.0)
+        ok, why = core.evaluate("Olympia et pour moi quel temps", near(wife, 5), 2.0)
         assert ok and "nouvel activateur camille" in why, why
         assert core.activator == "camille"
 
@@ -179,7 +179,7 @@ def test_family_mode_and_short_wake():
 
         # Family mode: any enrolled voice accepted mid-exchange, no rebind needed.
         core = make_core(household, clock, family_mode=True)
-        ok, _ = core.evaluate("Merlin on veut une recette de crêpes", near(fred, 1), 2.0)
+        ok, _ = core.evaluate("Olympia on veut une recette de crêpes", near(fred, 1), 2.0)
         assert ok
         clock.t += 3
         ok, why = core.evaluate("avec du beurre salé s'il te plaît", near(wife, 2), 2.0)
@@ -189,13 +189,13 @@ def test_family_mode_and_short_wake():
         # Short wake utterance: lenient identity bar, binds without anchor.
         core2 = make_core(household, clock)
         clock.t += 100  # attention closed
-        ok, why = core2.evaluate("Merlin ?", near(fred, 3, noise=1.2), 0.8)  # sim ~0.6 but short
+        ok, why = core2.evaluate("Olympia ?", near(fred, 3, noise=1.2), 0.8)  # sim ~0.6 but short
         assert ok and "court" in why, why
         assert core2.activator == "fred"
 
         # Fail-open: no embedding never locks anyone out.
         clock.t += 200
-        ok, why = core2.evaluate("Merlin tu es là", None, 2.0)
+        ok, why = core2.evaluate("Olympia tu es là", None, 2.0)
         assert ok and "indisponible" in why, why
         assert core2.last_speaker is None  # fail-open passes, but no attribution
         print("ok: family mode, short wake, fail-open")
@@ -212,10 +212,10 @@ def test_stop_and_privacy_hold():
         core = make_core(household, clock)
 
         # Open an exchange, then stop it mid-conversation.
-        ok, _ = core.evaluate("Merlin quelle heure est-il", near(fred, 1), 2.0)
+        ok, _ = core.evaluate("Olympia quelle heure est-il", near(fred, 1), 2.0)
         assert ok
         clock.t += 2
-        ok, why = core.evaluate("Merlin chut", near(fred, 2), 1.0)
+        ok, why = core.evaluate("Olympia chut", near(fred, 2), 1.0)
         assert not ok and why == "stop → mode privé", why
         assert core.on_hold and core.activator is None
 
@@ -226,41 +226,41 @@ def test_stop_and_privacy_hold():
         assert not ok and why == "privé", why
         assert core.last_speaker is None
         clock.t += 2
-        ok, why = core.evaluate("Merlin ?", near(fred, 4), 0.6)  # short: no leniency here
+        ok, why = core.evaluate("Olympia ?", near(fred, 4), 0.6)  # short: no leniency here
         assert not ok and why == "privé", why
-        # Unknown voice can't lift it (guest saying "Merlin" at the demo).
+        # Unknown voice can't lift it (guest saying "Olympia" at the demo).
         clock.t += 2
-        ok, why = core.evaluate("Merlin tu m'entends", near(stranger, 5), 2.0)
+        ok, why = core.evaluate("Olympia tu m'entends", near(stranger, 5), 2.0)
         assert not ok and why == "privé", why
         # Embedding failure fails CLOSED under hold (inverse of the wake bias).
         clock.t += 2
-        ok, why = core.evaluate("Merlin tu es là", None, 2.0)
+        ok, why = core.evaluate("Olympia tu es là", None, 2.0)
         assert not ok and why == "privé", why
         assert core.on_hold
 
         # A verified enrolled wake sentence lifts the hold and activates.
         clock.t += 2
-        ok, why = core.evaluate("Merlin on peut reprendre maintenant", near(fred, 6), 2.5)
+        ok, why = core.evaluate("Olympia on peut reprendre maintenant", near(fred, 6), 2.5)
         assert ok and "fin du mode privé" in why, why
         assert not core.on_hold and core.activator == "fred" and core.last_speaker == "fred"
 
         # Stop works from ANY voice (privacy asymmetry), in either word order,
-        # and "Merlin stop-kill" matches via the "stop" token.
+        # and "Olympia stop-kill" matches via the "stop" token.
         clock.t += 2
-        ok, why = core.evaluate("Chut Merlin", near(stranger, 7), 1.2)
+        ok, why = core.evaluate("Chut Olympia", near(stranger, 7), 1.2)
         assert not ok and why == "stop → mode privé", why
         assert core.on_hold
         clock.t += 2
-        ok, _ = core.evaluate("Merlin on peut reprendre maintenant", near(wife, 8), 2.5)
+        ok, _ = core.evaluate("Olympia on peut reprendre maintenant", near(wife, 8), 2.5)
         assert ok
         clock.t += 2
-        ok, why = core.evaluate("Merlin stop-kill", near(wife, 9), 1.5)
+        ok, why = core.evaluate("Olympia stop-kill", near(wife, 9), 1.5)
         assert not ok and why == "stop → mode privé", why
 
         # A lone "chut" (no wake word around) never stops — someone shushing
         # a kid mid-exchange must not kill the session.
         clock.t += 2
-        ok, _ = core.evaluate("Merlin on peut reprendre maintenant", near(fred, 10), 2.5)
+        ok, _ = core.evaluate("Olympia on peut reprendre maintenant", near(fred, 10), 2.5)
         assert ok
         clock.t += 2
         ok, why = core.evaluate("chut les enfants on se calme", near(fred, 11), 2.0)
@@ -288,21 +288,21 @@ def test_stop_activator_only():
         core = make_core(household, clock, stop_activator_only=True)
 
         # No activator bound: nothing to hijack, anyone may stop.
-        ok, why = core.evaluate("Merlin chut", near(stranger, 1), 1.2)
+        ok, why = core.evaluate("Olympia chut", near(stranger, 1), 1.2)
         assert not ok and why == "stop → mode privé", why
         assert core.on_hold
 
         clock.t += 2
-        ok, _ = core.evaluate("Merlin on peut reprendre maintenant", near(fred, 2), 2.5)
+        ok, _ = core.evaluate("Olympia on peut reprendre maintenant", near(fred, 2), 2.5)
         assert ok and core.activator == "fred"
 
         # Enrolled but not the activator -> stop refused, session intact.
         clock.t += 2
-        ok, why = core.evaluate("Merlin chut", near(wife, 3), 1.2)
+        ok, why = core.evaluate("Olympia chut", near(wife, 3), 1.2)
         assert not ok and why == "stop refusé (pas l'activateur)", why
         assert not core.on_hold and core.activator == "fred"
         clock.t += 2
-        ok, why = core.evaluate("Chut Merlin", near(stranger, 4), 1.2)
+        ok, why = core.evaluate("Chut Olympia", near(stranger, 4), 1.2)
         assert not ok and "refusé" in why and not core.on_hold, why
 
         # The raw-audio channel has no voice identity: inert in this mode
@@ -312,15 +312,15 @@ def test_stop_activator_only():
 
         # Embedding failure stops anyway: a missed stop is the worse failure.
         clock.t += 2
-        ok, why = core.evaluate("Merlin chut", None, 1.2)
+        ok, why = core.evaluate("Olympia chut", None, 1.2)
         assert not ok and why == "stop → mode privé" and core.on_hold, why
 
         # The activator's own stop works (lenient bar on a short phrase).
         clock.t += 2
-        ok, _ = core.evaluate("Merlin on peut reprendre maintenant", near(fred, 5), 2.5)
+        ok, _ = core.evaluate("Olympia on peut reprendre maintenant", near(fred, 5), 2.5)
         assert ok
         clock.t += 2
-        ok, why = core.evaluate("Merlin chut", near(fred, 6), 1.2)
+        ok, why = core.evaluate("Olympia chut", near(fred, 6), 1.2)
         assert not ok and why == "stop → mode privé" and core.on_hold, why
 
         # Default mode: raw_stop holds immediately.
@@ -360,19 +360,19 @@ def test_lift_hold_http():
         household.finish_enrollment()
         enroll_voice(household, "fred", fred, 100)
         core = make_core(household, clock)
-        ok, _ = core.evaluate("Merlin quelle heure est-il", near(fred, 2), 2.0)
+        ok, _ = core.evaluate("Olympia quelle heure est-il", near(fred, 2), 2.0)
         assert ok
         core.enter_hold()
         assert core.on_hold
         # Sous privé, un éveil court reste refusé (barre pleine, par design).
         clock.t += 2
-        ok, why = core.evaluate("Merlin tu es là", near(fred, 3), 0.6)
+        ok, why = core.evaluate("Olympia tu es là", near(fred, 3), 0.6)
         assert not ok, why
         core.lift_hold()
         assert not core.on_hold
         # L'éveil normal remarche, leniency courte incluse.
         clock.t += 2
-        ok, why = core.evaluate("Merlin ?", near(fred, 4), 0.6)
+        ok, why = core.evaluate("Olympia ?", near(fred, 4), 0.6)
         assert ok and "court" in why, why
         core.lift_hold()  # idempotent hors hold
     print("ok: lift_hold (HTTP) sort du mode privé, éveil normal restauré")
@@ -385,8 +385,8 @@ def test_polite_closer():
     from voice_guard import is_polite_closer
 
     # Phrase classification: gratitude/farewell close, answers don't.
-    for text in ("Merci.", "Merci Merlin !", "Merci beaucoup, c'est gentil.",
-                 "Au revoir.", "À bientôt Merlin.", "OK merci."):
+    for text in ("Merci.", "Merci Olympia !", "Merci beaucoup, c'est gentil.",
+                 "Au revoir.", "À bientôt Olympia.", "OK merci."):
         assert is_polite_closer(normalize_words(text)), text
     for text in ("Oui.", "Non.", "D'accord.", "OK.", "C'est bon.",
                  "Merci de me dire l'heure.", "Merci, merci, Daniel."):
@@ -400,7 +400,7 @@ def test_polite_closer():
         enroll_voice(household, "fred", fred, 100)
         core = make_core(household, clock)
 
-        ok, why = core.evaluate("Merlin quelle heure est-il", near(fred, 2), 2.0)
+        ok, why = core.evaluate("Olympia quelle heure est-il", near(fred, 2), 2.0)
         assert ok and core.activator == "fred", why
 
         # Bystander's short 'Merci.' -> IGNORED: no 'De rien !', never
@@ -430,7 +430,7 @@ def test_polite_closer():
 
         # The activator's own thanks closes (lenient bar: profile/anchor).
         clock.t += 2
-        ok, why = core.evaluate("Merci Merlin.", near(fred, 7), 0.8)
+        ok, why = core.evaluate("Merci Olympia.", near(fred, 7), 0.8)
         assert not ok and "échange fermé" in why, why
         assert core.activator is None
 
@@ -467,7 +467,7 @@ def test_topup_rolling_cap_and_stale_marker():
         while household.pending_name():
             clock.t += 5
             ok, why = core.evaluate(
-                "Merlin une phrase de top up assez longue", near(fred, 300 + n), 2.0)
+                "Olympia une phrase de top up assez longue", near(fred, 300 + n), 2.0)
             assert ok and "top-up" in why, why
             n += 1
             assert n <= 8, "top-up must complete after 8 enrolled utterances"
@@ -477,7 +477,7 @@ def test_topup_rolling_cap_and_stale_marker():
         household.start_enrollment("fred", target=PROFILE_MAX + 8)
         clock.t += 5
         ok, why = core.evaluate(
-            "Merlin une phrase de top up assez longue", near(fred, 400), 2.0)
+            "Olympia une phrase de top up assez longue", near(fred, 400), 2.0)
         assert ok and "top-up 1/8" in why, why
         household2 = make_household(tmp)  # bot restart
         core2 = make_core(household2, clock)
@@ -485,7 +485,7 @@ def test_topup_rolling_cap_and_stale_marker():
         while household2.pending_name():
             clock.t += 5
             ok, why = core2.evaluate(
-                "Merlin une phrase de top up assez longue", near(fred, 400 + n), 2.0)
+                "Olympia une phrase de top up assez longue", near(fred, 400 + n), 2.0)
             assert ok, why
             n += 1
         assert n == 8, f"restart must not reset top-up progress (took {n})"
@@ -553,12 +553,12 @@ def test_ambiguous_attribution_drops():
         # A voice exactly between the two profiles: above threshold on both,
         # margin ~0 -> ambiguous, dropped, neither activator nor speaker set.
         mixed = (fred + wife) / np.linalg.norm(fred + wife)
-        ok, why = core.evaluate("Merlin quelle est la météo demain", mixed, 2.0)
+        ok, why = core.evaluate("Olympia quelle est la météo demain", mixed, 2.0)
         assert not ok and "ambiguë" in why, why
         assert core.activator is None and core.last_speaker is None
 
         # A clear voice still wakes normally.
-        ok, why = core.evaluate("Merlin quelle est la météo demain", near(fred, 50), 2.0)
+        ok, why = core.evaluate("Olympia quelle est la météo demain", near(fred, 50), 2.0)
         assert ok and core.activator == "fred", why
     print("ok: attribution ambiguë -> drop (aucun nom posé), voix franche passe")
 

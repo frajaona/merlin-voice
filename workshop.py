@@ -235,7 +235,7 @@ def process_one() -> bool:
     log(f"candidate '{slug}' built by {outcome} (committed={committed}); "
         f"approve with: venv/bin/python tools/approve_skill.py {slug}")
     notify_user(f"✅ Atelier Merlin : « {pending.get('capability')} » ({slug}) a passé les gates. "
-                f"Pour l'activer : dis « Merlin, active {slug.replace('_', ' ')} » "
+                f"Pour l'activer : dis « Olympia, active {slug.replace('_', ' ')} » "
                 f"ou venv/bin/python tools/approve_skill.py {slug}")
     return True
 

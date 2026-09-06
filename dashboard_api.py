@@ -63,7 +63,7 @@ router = APIRouter(prefix="/api/workshop", dependencies=[Depends(require_token)]
 # ---------------------------------------------------------------------------
 # Panic stop: POST /api/stop {"speaker": "<name>"} puts the session(s) whose
 # current activator is that enrolled person on privacy hold and cuts any
-# in-flight answer — "Merlin chut" over HTTP, scoped to one person's
+# in-flight answer — "Olympia chut" over HTTP, scoped to one person's
 # exchange. The token authenticates the household; the speaker scopes the
 # effect (another member's open exchange is left alone).
 # ---------------------------------------------------------------------------

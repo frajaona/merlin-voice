@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Merlin</title>
+  <title>Olympia</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -277,7 +277,7 @@
 <body>
   <header>
     <div id="conn-dot"></div>
-    <h1>MERLIN</h1>
+    <h1>OLYMPIA</h1>
     <div class="spacer"></div>
     <button id="btn-token">token</button>
   </header>
@@ -287,8 +287,8 @@
       <div id="orb">🎙</div>
       <div id="status">Appuie pour te connecter</div>
       <div id="voice-buttons">
-        <button id="btn-stop" title="Coupe et passe en mode privé (comme « Merlin, chut »)">🤫 Chut</button>
-        <button id="btn-resume" title="Sort du mode privé (« Merlin, tu es là ? » en HTTP)">🔔 Réveiller</button>
+        <button id="btn-stop" title="Coupe et passe en mode privé (comme « Olympia, chut »)">🤫 Chut</button>
+        <button id="btn-resume" title="Sort du mode privé (« Olympia, tu es là ? » en HTTP)">🔔 Réveiller</button>
         <button id="btn-disconnect">Déconnecter</button>
       </div>
       <!-- No `muted` attribute: it's boolean, muted="false" still mutes -->
@@ -371,7 +371,7 @@
 
     const authHeaders = (extra = {}) => ({ 'Authorization': 'Bearer ' + token, ...extra });
 
-    // ---- panic stop ("Merlin chut" as a button) ------------------------------
+    // ---- panic stop ("Olympia chut" as a button) ------------------------------
     // Plain HTTP on purpose: works even from a browser without the WebRTC
     // session. Scoped: /api/stop requires the person whose exchange to stop —
     // we send the current activator learned from the gate-decision feed.
@@ -387,13 +387,13 @@
       if (resp.ok) {
         const r = await resp.json();
         setStatus(r.stopped
-          ? `Mode privé pour ${r.speaker} — « Merlin, tu es là ? » pour reprendre`
+          ? `Mode privé pour ${r.speaker} — « Olympia, tu es là ? » pour reprendre`
           : `Aucune session active pour ${r.speaker}`);
       }
     });
 
     // ---- resume (exit privacy mode) ------------------------------------------
-    // The voice lift ("Merlin, tu es là ?") needs the full similarity bar and
+    // The voice lift ("Olympia, tu es là ?") needs the full similarity bar and
     // can fail in bad acoustics; this is the guaranteed exit (token = household
     // authority, same logic as the Chut button).
     $('btn-resume').addEventListener('click', async () => {
@@ -404,7 +404,7 @@
       if (resp.ok) {
         const r = await resp.json();
         setStatus(r.resumed
-          ? `Mode privé levé (${r.resumed} session${r.resumed > 1 ? 's' : ''}) — « Merlin… » réécoute`
+          ? `Mode privé levé (${r.resumed} session${r.resumed > 1 ? 's' : ''}) — « Olympia… » réécoute`
           : 'Aucune session en mode privé');
       }
     });
@@ -663,7 +663,7 @@
         botBubble.className = 'bubble bot';
         const who = document.createElement('span');
         who.className = 'who';
-        who.textContent = 'Merlin';
+        who.textContent = 'Olympia';
         botBubble.appendChild(who);
         botBubble.appendChild(document.createTextNode(''));
         prepend(convo, botBubble); // above its user bubble: newest-first
@@ -690,7 +690,7 @@
 
     function setChatEnabled(on) {
       chatInput.disabled = chatSend.disabled = !on;
-      chatInput.placeholder = on ? 'Écrire à Merlin…' : 'Connecte-toi pour écrire…';
+      chatInput.placeholder = on ? 'Écrire à Olympia…' : 'Connecte-toi pour écrire…';
     }
 
     $('chat-bar').addEventListener('submit', (e) => {

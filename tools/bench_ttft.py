@@ -1,5 +1,5 @@
 """Benchmark TTFT (time to first token) and total latency:
-Hermes gateway vs direct Ollama, with the Merlin voice system prompt."""
+Hermes gateway vs direct Ollama, with the Olympia voice system prompt."""
 import json
 import re
 import sys
@@ -11,13 +11,13 @@ src = open("/Users/fred/Developer/ai/merlin-voice/bot.py").read()
 m = re.search(r'HERMES_API_KEY = os\.getenv\("HERMES_API_KEY", "([^"]+)"\)', src)
 HERMES_KEY = m.group(1) if m else ""
 
-SYSTEM_PROMPT = """Tu es Merlin, un assistant personnel intelligent et chaleureux. Tu réponds toujours en français.
+SYSTEM_PROMPT = """Tu es Olympia, une assistante personnelle intelligent et chaleureux. Tu réponds toujours en français.
 Règles importantes :
 - Tes réponses seront lues à voix haute — pas de markdown, pas de symboles spéciaux.
 - Phrases courtes et naturelles. Maximum deux phrases par réponse sauf si on te demande des détails."""
 
 QUESTIONS = [
-    "Bonjour Merlin, explique-moi en deux phrases pourquoi le ciel est bleu.",
+    "Bonjour Olympia, explique-moi en deux phrases pourquoi le ciel est bleu.",
     "Quelle est la capitale de l'Australie ?",
 ]
 

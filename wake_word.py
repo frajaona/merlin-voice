@@ -1,23 +1,25 @@
-"""Raw-audio wake-word engine for "Merlin".
+"""Raw-audio wake-word engine for "Olympia".
 
 Runs a small streaming French ASR (sherpa-onnx zipformer int8, CommonVoice)
 continuously on the incoming audio, on its own thread, and fires a WakeState
-timestamp whenever a "merlin"-like word shows up in the live decode. The
+timestamp whenever an "olympia"-like word shows up in the live decode. The
 GateCore treats a recent raw-audio wake as equivalent to seeing the wake word
 in the Whisper transcription — so the wake still works when Whisper mangles
-"Merlin" into something else (a real session logged it as "Moulet").
+the name (with the previous wake word "Merlin", a real session logged "Moulet").
 
 Why a French ASR instead of a dedicated keyword-spotting model: the available
-KWS models are English-trained and hear French "Merlin" as a different token
-sequence every time (measured: MELA/SELEN/MITTLEN/MALLA on four utterances) —
-no stable pattern to key on. The French zipformer hears it as MERLIN.
+KWS models are English-trained and hear a French name as a different token
+sequence every time (measured on "Merlin": MELA/SELEN/MITTLEN/MALLA on four
+utterances) — no stable pattern to key on. The French zipformer hears
+"Olympia" as OLYMPIA / OLIMPIA.
 
-The same decoder carries the stop channel ("Merlin chut/stop", either order):
+The same decoder carries the stop channel ("Olympia chut/stop", either order):
 a StopState fire cuts the in-flight answer and puts the VoiceGate on privacy
 hold (see voice_guard.py) without waiting for Whisper.
 
-Validated on synthesized French speech (tools/test_wake_word.py):
-10/11 correct including "Berlin"/"merlan"/"merveille" rejections.
+Wake word history: "Merlin" from the start until 2026-09-06, "Olympia" since
+(see docs/DECISIONS.md — the Merlin-era decode measurements live there).
+Validated on synthesized French speech (tools/test_wake_word.py).
 """
 import os
 import queue
@@ -41,47 +43,66 @@ MODEL_URL = (
 )
 
 
-# The streaming decoder glues and misspells: real "Salut Merlin" was decoded
-# as SALUMEERLIN, "Merlin ?" as MERLINGUE, and the first vowel can come out
-# as 'a'. Match the character stream (spaces removed) for m + e/a vowel(s) +
-# rl + an i/y continuation — merlan/merlot/merle continue with a/o/e after
-# the l and stay silent. Bare "Merlin ?" occasionally decodes without the i
-# (SMERLAND) and is then caught by the Whisper transcript channel instead.
-_WAKE_RE = re.compile(r"m[ae]{1,2}rl[iy]")
+# The streaming decoder glues and misspells. Measured on synthesized French
+# (Kokoro ff_siwis, tools/test_wake_word.py, 2026-09-06): "Olympia" decodes
+# as OLYMPIA or OLIMPIA (y/i free), "Olympia, quelle heure" glued into
+# OLYMPIAK, "Olympia, chut" at fast speed into OLIMPIES. Neighbouring real
+# words continue differently after the p: OLYMPIQUES (q), OLYMPIEN (e),
+# OLYMPE (e), so requiring an 'a' right after ol[iy]mp[iy] keeps them
+# silent. Only "olympiade(s)" shares the 'a' — excluded per word below.
+# Judged per decoded word (a glued neighbour still contains the pattern);
+# the fully joined text would swallow the olympiade exclusion.
+_WAKE_RE = re.compile(r"ol[iy]mp[iy]a")
+_WAKE_EXCLUDE_RE = re.compile(r"ol[iy]mp[iy]ad")  # olympiade(s)
 
 # Stop channel: "stop" exact plus the measured decode variants of the
 # interjection "chut" — CHU, CHUS, SUT, CHUTE, SHUT on synthesized speech:
 # the final consonant is unstable and the fricative opens as S or SH. Bare
-# "su" is excluded ("j'ai su…" is normal French); "parachute" and "stoppe"
-# stay different words. Glued-adjacency forms cover the decoder gluing
-# neighbours (real "Salut Merlin" came out SALUMEERLIN). To be re-tuned on
-# real decodes (MERLIN_WAKE_DEBUG=1) if recall disappoints.
+# "su" is excluded ("j'ai su…" is normal French) EXCEPT when it sits right
+# next to the wake word in the same decode ("Chut Olympia." measured as
+# SU OLYMPIA — a false stop there costs one re-wake, a missed stop is the
+# privacy failure). "parachute" and "stoppe" stay different words.
+# Glued-adjacency forms cover the decoder gluing neighbours. To be re-tuned
+# on real decodes (MERLIN_WAKE_DEBUG=1) if recall disappoints.
 _STOP_CHUT_RE = re.compile(r"^(chu|shu)(t|te|ts|s)?$|^sut$")
-_STOP_GLUED_RE = re.compile(r"(chut|shut|stop)e?m[ae]{1,2}rl|m[ae]{1,2}rl\w{0,4}(chut|shut|stop)")
+_STOP_GLUED_RE = re.compile(r"(chut|shut|stop)e?ol[iy]mp[iy]a|ol[iy]mp[iy]a\w{0,4}(chut|shut|stop)")
+_STOP_ADJACENT_ONLY = frozenset(("su",))
+
+
+def _is_wake_word_raw(w: str) -> bool:
+    return _WAKE_RE.search(w) is not None and _WAKE_EXCLUDE_RE.search(w) is None
 
 
 def _is_stop_word_raw(w: str) -> bool:
     return w == "stop" or _STOP_CHUT_RE.match(w) is not None
 
-# A stop word alone counts if the wake word fired just before — "Merlin…
+# A stop word alone counts if the wake word fired just before — "Olympia…
 # chut" often splits across a decoder reset (the wake fire resets the stream).
 STOP_AFTER_WAKE_SECS = 3.0
 
 
 def is_wake_text(text: str) -> bool:
-    """True if a "merlin"-like sound appears in the decoded text."""
-    return _WAKE_RE.search("".join(normalize_words(text))) is not None
+    """True if an "olympia"-like sound appears in the decoded text."""
+    return any(_is_wake_word_raw(w) for w in normalize_words(text))
 
 
 def is_stop_text(text: str) -> bool:
     """True if a stop word appears in the decoded text (pairing with the
     wake word is judged by the caller, not here). The glued regex runs
     per-word — gluing happens inside one decoded token; matching the fully
-    joined text would false-positive on "parachute merlin"."""
+    joined text would false-positive on "parachute olympia"."""
     words = normalize_words(text)
     if any(_is_stop_word_raw(w) for w in words):
         return True
-    return any(_STOP_GLUED_RE.search(w) for w in words)
+    if any(_STOP_GLUED_RE.search(w) for w in words):
+        return True
+    # Weak stop variants count only glued to the wake word (see above).
+    for i, w in enumerate(words):
+        if w in _STOP_ADJACENT_ONLY:
+            neighbours = words[max(0, i - 1):i] + words[i + 1:i + 2]
+            if any(_is_wake_word_raw(n) for n in neighbours):
+                return True
+    return False
 
 
 class WakeState:
@@ -198,13 +219,13 @@ class WakeWordDetector:
                 logger.debug(f"wake partial: [{text}] ep={endpoint}")
             words = normalize_words(text)
             # The last word of a live partial may be cut mid-word — a trailing
-            # "MERL" could still become "merlan". Judge it only at endpoint.
+            # "OLYMPI" could still become "olympique". Judge it only at endpoint.
             candidates = words if endpoint else words[:-1]
             cand_text = " ".join(candidates)
-            # Stop outranks wake: "merlin chut" in one segment fires the stop
+            # Stop outranks wake: "olympia chut" in one segment fires the stop
             # (the earlier in-segment wake fire is harmless — the gate checks
             # the stop first). A lone stop word still counts shortly after a
-            # wake fire, for "Merlin… [pause] chut" split across segments.
+            # wake fire, for "Olympia… [pause] chut" split across segments.
             if self._stop_state is not None and is_stop_text(cand_text) and (
                 is_wake_text(cand_text) or self._state.fired_within(STOP_AFTER_WAKE_SECS)
             ):
@@ -218,8 +239,8 @@ class WakeWordDetector:
                     self._state.fire()
                     segment_woke = True
                 # Keep decoding the segment instead of resetting: an early
-                # reset swallows a trailing stop word mid-word (measured:
-                # "Merlin, stop." reset at [MERLIN S] left only [TOP]). The
+                # reset swallows a trailing stop word mid-word (measured with
+                # "Merlin": a reset at [MERLIN S] left only [TOP]). The
                 # gate reads the wake with 3 s of slack, nothing needs the
                 # fire-and-reset. segment_woke prevents refiring meanwhile.
                 if endpoint:

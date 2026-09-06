@@ -2,7 +2,7 @@
 
 Streams synthesized French audio in 20ms chunks (like real WebRTC input)
 through the WakeWordDetector and checks WakeState fires — including the case
-that motivated the engine: Whisper mangling "Merlin" so the transcript
+that motivated the engine: Whisper mangling the wake word so the transcript
 channel misses it. Also verifies GateCore honors the raw wake channel.
 
 Run: venv/bin/python tools/test_wake_word.py
@@ -34,34 +34,40 @@ def synth_batch():
 
 
 def test_matcher():
-    assert is_wake_text("MERLIN QUELLE HEURE EST IL")
-    assert is_wake_text("SALUMEERLIN COMMENÇA VA")  # real glued decode of "Salut Merlin"
-    assert is_wake_text("MERLINGUE")  # real decode of a bare "Merlin ?"
-    assert is_wake_text("MARLIN EST CE QUE")  # a-vowel variant
+    # Real zipformer decodes of synthesized "Olympia" sentences (2026-09-06).
+    assert is_wake_text("OLYMPIAK ET LEUR EST IL")  # glued decode of "Olympia, quelle heure est-il ?"
+    assert is_wake_text("SALUE OLYMPIA COMMENÇA VA")
+    assert is_wake_text("OLIMPIA")  # bare "Olympia ?" (i spelling)
+    assert is_wake_text("EST CE QUE TU M'ENTENDS OLYMPIA")
+    assert is_wake_text("SALUOLYMPIA")  # glued neighbour still contains the name
+    assert not is_wake_text("ON REGARDE LES JEUX OLYMPIQUES CE SOIR")  # q-continuation
+    assert not is_wake_text("LE MONT OLYMPE EST EN GRÈCE")
+    assert not is_wake_text("C'EST UN ATHLÈTE OLYMPIEN")
+    assert not is_wake_text("LES OLYMPIADES DE MATHS")  # shares the 'a' — explicit exclusion
     assert not is_wake_text("ON VA À BERLIN DEMAIN")
-    assert not is_wake_text("J'AI PÊCHÉ UN MERLANT")  # a-continuation stays silent
-    assert not is_wake_text("UN VERRE DE MERLOT")
-    assert not is_wake_text("LE MERLE CHANTE")
-    assert not is_wake_text("C'EST UNE MERVEILLE")
+    assert not is_wake_text("IL Y A UN LIT EN PIN")
     assert not is_wake_text("")
     print("ok: wake text matcher")
 
 
 def test_stop_matcher():
-    assert is_stop_text("CHUT MERLIN")
-    assert is_stop_text("MERLIN CHUT")
-    assert is_stop_text("MERLIN STOP")
-    assert is_stop_text("MERLIN CHUTE")  # interjection decoded with trailing e
-    assert is_stop_text("MERLIN SHUT")  # real decode of "Merlin, chut !" (sh onset)
-    assert is_stop_text("MERLIN SUT")  # real decode (s onset, t kept)
-    assert is_stop_text("MERLIN CHU")  # real decode (final t dropped)
-    assert is_stop_text("CHUS MERLIN")  # real decode of "Chut Merlin."
-    assert is_stop_text("CHUTMERLIN")  # glued decode
-    assert is_stop_text("MERLINSTOP")
-    assert not is_stop_text("MERLIN QUELLE HEURE EST IL")
-    assert not is_stop_text("C'EST QUOI UN PARACHUTE MERLIN")  # exact word only
-    assert not is_stop_text("MERLIN STOPPE LA MUSIQUE")  # no prefix match
-    assert not is_stop_text("MERLIN J'AI SU LA REPONSE")  # bare "su" is normal French
+    assert is_stop_text("CHUT OLYMPIA")
+    assert is_stop_text("OLYMPIA CHUT")
+    assert is_stop_text("OLYMPIA STOP")
+    assert is_stop_text("OLIMPIA STOP")  # real decode of "Olympia, stop."
+    assert is_stop_text("OLYMPIA CHUTE")  # interjection decoded with trailing e
+    assert is_stop_text("OLIMPIA SHU")  # real decode of "Olympia, chut !" (sh onset, t dropped)
+    assert is_stop_text("OLYMPIA SUT")  # s onset, t kept
+    assert is_stop_text("OLYMPIA CHU")
+    assert is_stop_text("CHUS OLYMPIA")
+    assert is_stop_text("SU OLYMPIA")  # real decode of "Chut Olympia." — "su" counts only next to the name
+    assert is_stop_text("CHUTOLYMPIA")  # glued decode
+    assert is_stop_text("OLYMPIASTOP")
+    assert not is_stop_text("OLYMPIA QUELLE HEURE EST IL")
+    assert not is_stop_text("C'EST QUOI UN PARACHUTE OLYMPIA")  # exact word only
+    assert not is_stop_text("OLYMPIA STOPPE LA MUSIQUE")  # no prefix match
+    assert not is_stop_text("OLYMPIA J'AI SU LA REPONSE")  # bare "su" away from the name is normal French
+    assert not is_stop_text("J'AI SU")
     assert not is_stop_text("")
     print("ok: stop text matcher")
 
@@ -90,10 +96,10 @@ def test_detector_streaming():
     detector.start()
 
     positives = [
-        "Merlin, quelle heure est-il ?",
-        "Salut Merlin, comment ça va ?",
-        "Merlin ?",
-        "Est-ce que tu m'entends Merlin ?",
+        "Olympia, quelle heure est-il ?",
+        "Salut Olympia, comment ça va ?",
+        "Olympia ?",
+        "Est-ce que tu m'entends Olympia ?",
     ]
     negatives = [
         "Quelle heure est-il ?",
@@ -117,9 +123,9 @@ def test_detector_stop_streaming():
     detector.start()
 
     stop_positives = [
-        "Merlin, chut !",
-        "Chut Merlin.",
-        "Merlin, stop.",
+        "Olympia, chut !",
+        "Chut Olympia.",
+        "Olympia, stop.",
     ]
     # Normal wake sentences must fire the wake, never the stop.
     hits = 0
@@ -130,7 +136,7 @@ def test_detector_stop_streaming():
         # endpoint, which can need >2s of silence (live audio never runs out).
         wake._last = 0.0
         hits += stream_through(detector, stop, synth(t), silence_ms=3500)
-    false_stop = stream_through(detector, stop, synth("Merlin, quelle heure est-il ?"), silence_ms=3500)
+    false_stop = stream_through(detector, stop, synth("Olympia, quelle heure est-il ?"), silence_ms=3500)
     woke = wake.fired_within(60)
     detector.stop()
     print(f"ok: streaming stop — recall {hits}/{len(stop_positives)}, "
@@ -170,13 +176,14 @@ def test_gatecore_raw_wake():
         core = GateCore(household, LastBotUtterance(), wake_state=state,
                         speaker_gate=True, threshold=0.60, require_wake=True)
 
-        # Whisper mangled "Merlin" -> no transcript wake, no raw wake -> drop.
-        ok, why = core.evaluate("Moulet, quelle heure est-il", near(1), 2.0)
+        # Whisper mangled "Olympia" (into the excluded "Olympe") -> no
+        # transcript wake, no raw wake -> drop.
+        ok, why = core.evaluate("Olympe, quelle heure est-il", near(1), 2.0)
         assert not ok and "hors attention" in why, why
 
         # Same mangled text, but the raw-audio engine heard it -> accepted.
         state.fire()
-        ok, why = core.evaluate("Moulet, quelle heure est-il", near(2), 2.0)
+        ok, why = core.evaluate("Olympe, quelle heure est-il", near(2), 2.0)
         assert ok and "éveil par fred" in why, why
         print("ok: GateCore honors raw-audio wake channel")
 

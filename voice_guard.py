@@ -1,4 +1,4 @@
-"""Voice guard — keeps Merlin usable in public and in a full household.
+"""Voice guard — keeps Olympia usable in public and in a full household.
 
 Three defenses between the microphone and the LLM:
 
@@ -8,14 +8,14 @@ Three defenses between the microphone and the LLM:
    regardé…", repeated-phrase loops, punctuation-only output).
 
 2. Household speaker gate: one voice profile per enrolled person in
-   data/voices/<name>.npz. Only enrolled voices can talk to Merlin.
+   data/voices/<name>.npz. Only enrolled voices can talk to Olympia.
    Enrollment: `tools/voice_profile.py enroll <name>`, then that person chats
-   with Merlin alone until their profile completes (8 utterances).
+   with Olympia alone until their profile completes (8 utterances).
 
 3. Attention gate with activator binding: an exchange opens with the wake
-   word ("Merlin") spoken by an enrolled voice — that person becomes the
+   word ("Olympia") spoken by an enrolled voice — that person becomes the
    *activator* and only their voice is answered for the rest of the exchange,
-   even if other household members chime in. Saying "Merlin…" again passes
+   even if other household members chime in. Saying "Olympia…" again passes
    the mic. Attention stays open while the bot speaks and for a follow-up
    window after it stops (longer when the bot asked a question); outside
    attention everything is ignored.
@@ -25,10 +25,10 @@ Rejected utterances are still written to the transcript store with a
 and thresholds can be tuned from real data.
 
 Stop phrase / privacy hold: a stop word ("chut", "stop") in the same
-utterance as the wake word ("Merlin chut", "Chut Merlin", "Merlin stop")
+utterance as the wake word ("Olympia chut", "Chut Olympia", "Olympia stop")
 cuts the bot mid-sentence, closes the exchange and enters a privacy hold:
 everything is rejected AND nothing is logged with content until an enrolled
-voice re-activates with a full verified wake sentence ("Merlin, tu es là ?").
+voice re-activates with a full verified wake sentence ("Olympia, tu es là ?").
 Any voice can stop — the failure asymmetry is the inverse of the wake word
 (a false stop costs one re-wake; a missed stop is a privacy failure) — but
 lifting the hold is stricter than a normal wake: no short-wake leniency, and
@@ -54,7 +54,7 @@ Environment knobs (all optional):
     MERLIN_FOLLOWUP_SECS      follow-up window after the bot stops (12)
     MERLIN_QUESTION_SECS      follow-up window after a bot question (15)
 Polite closers: mid-exchange, an utterance that is nothing but thanks or
-farewell ("Merci.", "Merci Merlin", "Au revoir") CLOSES the exchange instead
+farewell ("Merci.", "Merci Olympia", "Au revoir") CLOSES the exchange instead
 of being answered — but only when the voice looks like the ACTIVATOR
 (lenient SHORT_WAKE_SIM bar, profile or live anchor). Any other or
 unverifiable voice is ignored: no reply, no close, the window just expires.
@@ -99,20 +99,28 @@ VOCAB_PATH = DATA_DIR / "stt_vocab.txt"
 # d'espace : ré-inscrire les profils et recalibrer les seuils.
 SPEAKER_MODEL_PATH = Path(__file__).resolve().parent / "models" / "nemo_en_titanet_large.onnx"
 
-WAKE_PREFIX = "merl"  # matches "merlin" and close mishearings
+# Wake word "Olympia" (since 2026-09-06, was "Olympia" — see docs/DECISIONS.md).
+# Whisper wrote it "Olympia" on every measured utterance; the i spelling is
+# kept for safety. Prefix match to survive a glued suffix ("Olympiaaa").
+WAKE_PREFIXES = ("olymp", "olimp")
 # Real French words that start like the wake word — never wake on these.
-WAKE_EXCLUDE = {"merlan", "merlans", "merlant", "merle", "merles", "merlu", "merlus", "merlot", "merlots"}
+# ("Olympe de Gouges" was once transcribed "Olympia de Gouges" under the
+# prompt bias — accepted: rare, and the speaker gate still applies.)
+WAKE_EXCLUDE = {
+    "olympe", "olympes", "olympien", "olympiens", "olympienne", "olympiennes",
+    "olympique", "olympiques", "olympisme", "olympiade", "olympiades",
+}
 
 
 def is_wake_word(word: str) -> bool:
-    return word.startswith(WAKE_PREFIX) and word not in WAKE_EXCLUDE
+    return word.startswith(WAKE_PREFIXES) and word not in WAKE_EXCLUDE
 
 
 # Exact-word match, not prefix: "stoppe la musique" or "parachute" must not
-# stop the session. "Merlin stop-kill" works because normalize_words splits
+# stop the session. "Olympia stop-kill" works because normalize_words splits
 # on the hyphen and "stop" matches. "chute" is in the default because Whisper
 # transcribes the interjection "Chut !" as "chute." (measured) — the cost is
-# a false stop on "Merlin … chute …" (rare, and a false stop is one re-wake).
+# a false stop on "Olympia … chute …" (rare, and a false stop is one re-wake).
 STOP_WORDS = frozenset(
     w.strip() for w in os.getenv("MERLIN_STOP_WORDS", "chut,chute,stop").lower().split(",") if w.strip()
 )
@@ -137,7 +145,7 @@ def has_stop_word(words: list) -> bool:
 # d'accompagnement ici).
 CLOSER_CORE = frozenset(("merci", "revoir", "bientot", "adieu"))
 CLOSER_FILLER = frozenset((
-    "merlin", "beaucoup", "bien", "tres", "c", "est", "gentil", "super",
+    "olympia", "beaucoup", "bien", "tres", "c", "est", "gentil", "super",
     "parfait", "nickel", "top", "cool", "a", "au", "la", "le", "prochaine",
     "bon", "bonne", "nuit", "journee", "soiree", "et", "ca", "va", "d",
     "accord", "ok",
@@ -199,7 +207,7 @@ TOPK_SIMS = 3              # profile score = mean of the k closest stored
                            # session, l'écart vient avec la diversité)
 PROFILE_MAX = 24           # rolling cap on stored embeddings per person
 VERIFY_MIN_SECS = 1.0      # embeddings of shorter clips are too unstable to
-                           # judge (a real "Merlin ?" scored 0.22 vs its owner)
+                           # judge (a real "Olympia ?" scored 0.22 vs its owner)
 VERIFY_MIN_WORDS = 3       # duration alone overstates content: it includes
                            # ~1s of VAD buffer, so a one-word "Non." measures
                            # >1s yet embedded at sim 0.08 vs its own speaker
@@ -465,7 +473,7 @@ class HouseholdProfiles:
 # ---------------------------------------------------------------------------
 
 class GateCore:
-    """Decides which utterances Merlin answers.
+    """Decides which utterances Olympia answers.
 
     Rules (speaker gate on, wake required — the defaults):
     - Outside attention, only the wake word opens an exchange, and only if the
@@ -690,7 +698,7 @@ class GateCore:
             logger.info(
                 "VoiceGate: éveil sous privé refusé — énoncé trop court ou "
                 f"embedding indisponible ({duration:.1f}s, {len(words)} mots) ; "
-                "il faut une phrase complète (« Merlin, tu es là ? »)"
+                "il faut une phrase complète (« Olympia, tu es là ? »)"
             )
             return False, HOLD_REASON
         name, sim, ambiguous = self._identify(embedding)
@@ -723,7 +731,7 @@ class GateCore:
         words = normalize_words(text)
         transcript_wake = any(is_wake_word(w) for w in words)
         wake = transcript_wake
-        # Raw-audio channel: the wake-word engine may have caught "Merlin"
+        # Raw-audio channel: the wake-word engine may have caught "Olympia"
         # even when Whisper mangled it. The fire must fall inside this
         # utterance's window (its duration plus a little slack).
         if not wake and self._wake_state is not None:
@@ -832,7 +840,7 @@ class GateCore:
                 self.last_speaker = name
                 return True, f"éveil par {name} (sim={sim:.2f})"
             return False, ambiguous or f"voix inconnue (sim={0.0 if sim is None else sim:.2f})"
-        # Short wake ("Merlin ?"): embeddings too unstable for the full bar.
+        # Short wake ("Olympia ?"): embeddings too unstable for the full bar.
         if name is not None and sim is not None and sim >= SHORT_WAKE_SIM:
             self._bind(name)  # anchor starts on the first verified utterance
             self._touch_attention()
@@ -879,7 +887,7 @@ class GateCore:
 
 def _initial_prompt() -> str:
     prompt = (
-        "Discussion en français avec Merlin, un assistant vocal. "
+        "Discussion en français avec Olympia, un assistant vocal. "
         "Météo, minuteur, actualités, l'Île d'Yeu, La Rochelle, Bordeaux."
     )
     if VOCAB_PATH.exists():

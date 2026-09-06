@@ -63,7 +63,7 @@ async def tts(kokoro, text):
 
 async def main():
     kokoro = Kokoro(str(CACHE / "kokoro-v1.0.onnx"), str(CACHE / "voices-v1.0.bin"))
-    q1 = await tts(kokoro, "Bonjour Merlin, explique-moi en détail tout ce que tu sais faire pour moi.")
+    q1 = await tts(kokoro, "Bonjour Olympia, explique-moi en détail tout ce que tu sais faire pour moi.")
     barge = await tts(kokoro, "Attends, attends, j'ai une autre question pour toi.")
     q2 = await tts(kokoro, "Peux-tu me décrire longuement comment tu contrôles la maison ?")
 

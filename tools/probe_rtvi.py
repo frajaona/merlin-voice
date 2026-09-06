@@ -10,7 +10,7 @@ Usage (bot must be running): venv/bin/python tools/probe_rtvi.py [speech.wav | "
 - a .wav path: plays it as the mic, expects a gate-decision server-message
 - any other string: sends it as a typed chat message (RTVI send-text,
   audio_response=false) and expects a silent bot-llm-text reply
-A test utterance: say -v Thomas "Merlin, quelle heure est-il ?" -o /tmp/u.wav --data-format=LEI16@16000
+A test utterance: say -v Thomas "Olympia, quelle heure est-il ?" -o /tmp/u.wav --data-format=LEI16@16000
 """
 import asyncio
 import fractions

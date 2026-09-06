@@ -287,6 +287,18 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   Fumée : TitaNet-L EER 0 % / marges +0.40 sur voix de démo (à confirmer
   sur les nôtres — item 2). Tests 13/13. `docs/DECISIONS.md` 2026-08-22.
 
+- **2026-09-06** — **Mot d'éveil « Merlin » → « Olympia »** (demande de Fred).
+  Les deux canaux re-mesurés sur parole synthétique (Kokoro) : zipformer
+  brut → OLYMPIA/OLIMPIA (regex `ol[iy]mp[iy]a`, exclusion olympiade),
+  Whisper → « Olympia » sur 100 % des énoncés (préfixes `olymp`/`olimp`,
+  liste d'exclusion olympe/olympique/olympien/olympiade). Persona du
+  system prompt renommée (« Tu es Olympia, une assistante… »), prompt
+  initial Whisper, dashboard, scripts d'inscription/éval et tests mis à
+  jour. Identifiants techniques inchangés (env `MERLIN_*`, `com.merlin.*`,
+  logs, dépôt). Tests : voice_guard 12/12, wake_word éveil 3/4 (quirk
+  décodeur après reset, idem Merlin), stop 2/3, 0 faux éveil. À valider
+  sur audio réel — détails et mesures dans `docs/DECISIONS.md`.
+
 ## À faire (par ordre de valeur estimée)
 
 1. ~~Top-up du profil de Fred en conditions cuisine + musique~~ **fait 21/08

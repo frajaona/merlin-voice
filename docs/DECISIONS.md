@@ -1441,3 +1441,68 @@ seuil 0.45 → **0 fausse acceptation, 2 faux rejets**.
 - À surveiller à l'usage : faux rejets voix courte/douce (barre 0.40) ;
   le fils n'est PAS dans le jeu d'éval — l'enregistrer dès que possible et
   re-passer le banc.
+
+## 2026-09-06 — Mot d'éveil : « Merlin » → « Olympia »
+
+**Demande** : Fred veut appeler l'assistante « Olympia ». Le mot d'éveil
+n'était pas paramétrable (regex + préfixe codés, calibrés sur des décodages
+réels de « Merlin ») : changer le mot = re-mesurer les deux canaux.
+
+**Mesures (parole synthétique Kokoro `ff_siwis`, vitesses 1.0 et 1.15,
+scripts jetables — les phrases sont dans `tools/test_wake_word.py`) :**
+
+| Phrase | Zipformer brut (canal éveil) | Whisper turbo (canal transcription) |
+|---|---|---|
+| « Olympia, quelle heure est-il ? » | OLYMPIAK ET LEUR EST IL | Olympia, quelle heure est-il ? |
+| « Salut Olympia, comment ça va ? » | SALUE OLYMPIA COMMENÇA VA | Salut Olympia, comment ça va ? |
+| « Olympia ? » | OLIMPIA | Olympia. |
+| « Est-ce que tu m'entends Olympia ? » | … OLIMPIA / … OLYMPIA | … Olympia ? |
+| « Olympia, chut ! » | OLIMPIA SHU (1.0) / OLIMPIES (1.15) | Olympia, CHU. |
+| « Chut Olympia. » | SU OLYMPIA | Je suis Olympia. |
+| « Olympia, stop. » | OLIMPIA STOP / OLIMPIA'S TORP | Olympia Stop. |
+| « les jeux olympiques » | OLYMPIQUES | Jeux Olympiques |
+| « le mont Olympe » | OLYMPE | Mont-Olympe |
+| « Olympe de Gouges » | OLYMPE | **Olympia** de Gouges (biais du prompt) |
+| « un athlète olympien » | OLYMPIEN | olympien |
+| « Berlin », « lit en pin » | BERLIN / LIT EN PIN | idem |
+
+**Décisions :**
+- **Canal brut** : `_WAKE_RE = ol[iy]mp[iy]a` jugé **par mot décodé** (plus
+  sur le texte recollé comme pour Merlin) ; les voisins réels continuent
+  autrement après le p (olympi**q**ue, olympi**e**n, olymp**e**) et restent
+  muets sans liste ; seul « olympiade(s) » partage le a → exclusion
+  `ol[iy]mp[iy]ad` par mot (le texte recollé aurait avalé cette exclusion
+  sur « Olympia dis-moi »).
+- **Canal Whisper** : préfixes `olymp`/`olimp` + `WAKE_EXCLUDE` {olympe(s),
+  olympien(ne)(s), olympique(s), olympisme, olympiade(s)}. Whisper écrit
+  « Olympia » proprement sur 100 % des énoncés mesurés.
+- **Stop** : mêmes mots (chut/chute/stop). Ajout ciblé : « su » (décodage
+  réel de « Chut Olympia. ») compte comme stop **uniquement adjacent au mot
+  d'éveil** dans le même décodage ; « j'ai su la réponse » reste muet.
+  Asymétrie inchangée : un faux stop coûte un ré-éveil, un stop raté est la
+  faille de vie privée.
+- **Persona renommée** dans le system prompt (« Tu es Olympia, une
+  assistante personnelle… »), prompt initial Whisper (« Discussion en
+  français avec Olympia… »), mot de remplissage des clôtures polies
+  (« Merci Olympia »), dashboard (titre, bulles, libellés), scripts
+  d'inscription/éval poussés au téléphone, bancs. **Non renommés** (identifiants
+  techniques) : dépôt, `MERLIN_*`, `com.merlin.*`, `data/merlin.log`,
+  clés localStorage, « Atelier Merlin » (nom du dépôt dans les notifs).
+- **Résultats tests** : voice_guard 12/12 ; wake_word : matchers ok, éveil
+  streaming **3/4, 0 faux éveil /4**, stop **2/3, 0 faux stop**.
+  - Le 1/4 raté : « Salut Olympia » enchaîné après un autre segment sur le
+    même flux décode **SALUPIA** (onset avalé juste après le `reset` du
+    décodeur) ; en flux frais il décode SALUE OLYMPIA à 3 vitesses sur 3.
+    Quirk du décodeur, pas de la regex — ne pas relâcher le motif pour
+    l'attraper (« salupia » ouvrirait n'importe quoi). Merlin avait le même
+    plafond (seuil du test ≥ 3/4 inchangé).
+  - Le 1/3 stop raté : « Chut Olympia. » en flux enchaîné perd le SU (le
+    canal Whisper le perd aussi : « Je suis Olympia »). « Olympia, chut »
+    (ordre principal) et « Olympia, stop » passent.
+- **Piste** : rendre le mot d'éveil configurable (nom + regex brute +
+  exclusions dans un petit dict) si un troisième changement arrive ; deux
+  changements en trois semaines ne le justifient pas encore.
+- **À valider sur audio réel** (`MERLIN_WAKE_DEBUG=1` une session, puis
+  éteindre) : voyelle d'attaque (« Aulympia » ?), nasale (« Olinpia » ?),
+  et « Olympia » dit vite en fin de phrase. Re-caler `_WAKE_RE` seulement
+  sur ces décodages réels.

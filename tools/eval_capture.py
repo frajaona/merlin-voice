@@ -8,7 +8,7 @@ Usage :
 Tant que la capture est ON, chaque énoncé accepté par le STT du bot (même
 canal que la prod : téléphone → WebRTC → VAD) est archivé en wav 16 k mono
 + transcript .txt sous data/speaker-eval/<nom>/. PAS BESOIN de dire
-« Merlin » : la capture est en amont du gate — Merlin restera muet sur la
+« Olympia » : la capture est en amont du gate — Olympia restera muet sur la
 plupart des phrases, c'est normal. Une personne à la fois, AU CALME, puis
 `stop` — l'audio est conservé sur disque, ne pas laisser tourner.
 
@@ -27,7 +27,7 @@ CAPTURE = REPO / "data" / "speaker-eval" / ".capture"
 
 EVAL_SCRIPT = """\
 Script d'éval — 20 phrases, seul(e), pièce CALME (pas de musique). Pas
-besoin de dire « Merlin » ni d'attendre une réponse : tout est enregistré.
+besoin de dire « Olympia » ni d'attendre une réponse : tout est enregistré.
 Marquer une petite pause (~1 s) entre les phrases. La CONDITION compte plus
 que le texte.
 
@@ -84,7 +84,7 @@ def main():
         print(f"capture ON pour '{name}'\n")
         print(EVAL_SCRIPT)
         # Push sur le téléphone (Telegram, best-effort) pour lire en bougeant.
-        result = notify.send(f"Merlin — éval voix pour {name}.\n\n{EVAL_SCRIPT}")
+        result = notify.send(f"Olympia — éval voix pour {name}.\n\n{EVAL_SCRIPT}")
         print(f"\n(script envoyé sur le téléphone : {result})")
     elif cmd == "stop":
         CAPTURE.unlink(missing_ok=True)
