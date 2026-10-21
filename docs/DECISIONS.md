@@ -1982,3 +1982,78 @@ L'updater vérifie toutes les heures, donc cela se reproduira.
   dans les 5 min. Avec 64 Go, il cohabite avec un challenger de ~15 Go.
   Si Ollama manque de mémoire, c'est l'autre modèle qui est évincé (la
   voix a priorité).
+
+## 2026-10-21 — Kev (modèle de décision) comme juge « est-ce adressé à Olympia ? » : lead parqué, mesuré
+
+Question de Fred : Kev (github.com/jaredpalmer/kev, Apache-2.0 — famille de
+« modèles de décision » 0.8B→27B sur base Qwen3.5 : texte + question oui/non
+ou QCM → probabilité calibrée par une tête de scoring, zéro génération, 0.8B
+et 4B sur MLX) a-t-il une place ici ? Un seul trou textuel dans le gate :
+la **parole latérale de l'activateur dans la fenêtre de suivi** (12–15 s
+après la réponse, tout ce que dit l'activateur est répondu, y compris ce
+qu'il dit à quelqu'un d'autre). Ce n'est pas le « routage par auto-score »
+rejeté le 13/08 (le LLM s'auto-notait, non calibré, enveloppe JSON) : ici
+c'est une tête dédiée, calibrée, hors du flux TTS. Banc jetable sur les
+vrais tours de `transcripts.db` (`tools/bench_kev_addressed.py`, serveur
+Kev local, 390 tours vocaux acceptés + 200 tours « hors attention » tirés
+au sort comme négatifs, dernière réponse de l'assistant en contexte).
+
+**Mesures (M5 Max 64 Go, MLX bf16, un seul tour par requête HTTP) :**
+
+| | Kev-0.8B | Kev-4B |
+|---|---|---|
+| Latence modèle par tour (médiane / p90) | 17 / 18 ms | 66 / 71 ms (32 ms si état en cache) |
+| Pendant une génération qwen (même GPU) | — | médiane 44 ms, max 135 ms |
+| RSS serveur | — | 3,6 Go |
+| p médiane acceptés (avec / sans mot d'éveil) | 0,66 / 0,69 | 0,81 / 0,76 |
+| p médiane « hors attention » | 0,45 | 0,21 |
+| AUC acceptés vs hors attention | 0,95 | 0,94 (0,97 avec mot d'éveil) |
+| Seuil 0,5 : acceptés gardés / hors-att. laissés passer | 379/390 / 45/200 | 313/390 / 16/200 |
+| Seuil 0,7 | 167/390 / 4/200 | 243/390 / 4/200 |
+
+- **Le coût n'est pas le problème** : 66 ms sur un GPU au repos, +12 ms
+  sous génération qwen, 3,6 Go. Ça tiendrait dans le chemin chaud.
+- **0.8B : inutilisable.** Probabilités tassées entre 0,3 et 0,8 ; il
+  sépare le bavardage ambiant des phrases à l'assistant (AUC 0,95) mais
+  pas la parole latérale des vraies commandes (« Joue le dernier album
+  d'Ed Sheeran » 0,47 au même niveau que « Allez chercher les ongles »
+  0,45).
+- **4B : signal réel mais zero-shot insuffisant en français.** Lecture à
+  la main des 390 acceptés triés par score : ~80 (≈20 %) sont de la parole
+  latérale, du charabia Whisper ou des artefacts d'avant les filtres (11
+  « … » du 13/08). Le bas du classement est juste (« Maman ? » 0,11,
+  « Pa, pa. » 0,10, « Bonjour, Baptiste. » 0,25, « À la même taille en
+  hauteur. » 0,25, « Qu'est-ce que vous voulez ? Allez chercher les
+  ongles. » 0,45). Mais **les commandes musique françaises tombent avec** :
+  « Joue le dernier album d'Ed Sheeran » 0,32, « Joue la musique dans la
+  cuisine » 0,36, « Joue l'album de … » 0,45, « Arrête la musique dans la
+  cuisine » 0,47, « Lecture dans la cuisine » 0,47, « Comment as-tu été
+  construit ? » 0,46. À 0,5 il retire ~45 vrais tours latéraux ET ~16
+  vraies commandes (dont 5 musique). Trou de langue probable (« joue » /
+  play), pas de bruit : les mêmes commandes en version longue scorent 0,9.
+- **Veto conservateur p < 0,30 sur les tours sans mot d'éveil** : 21/280
+  retirés, dont 7 « … » (artefacts 13/08, impossibles aujourd'hui), 2
+  clôtures polies (déjà gérées par `is_polite_closer`), 1 discutable
+  (« À la même taille en hauteur » — Camille répondant à l'assistant), le
+  reste = charabia/latéral. Aucune commande perdue. À 0,35 tombent déjà
+  « Joue le dernier album d'Ed Sheeran », « Laisse tomber », « Sur l'île,
+  Dieu y fait combien ? » → **0,30 est le genou**, et il ne rapporte que
+  ~10 tours réels sur 390 : pas de quoi mettre un modèle de plus dans le
+  chemin chaud.
+- **Ce qu'il faudrait pour le reprendre** : (1) étiqueter à la main ~400
+  tours de `transcripts.db` (adressé / latéral / charabia — l'item 5 du
+  roadmap, exploitation de la base, le fournit) ; (2) fine-tuner Kev-4B
+  dessus (le skill `kev-finetune` passe par Modal → **les transcriptions
+  du foyer quitteraient la machine, décision privacy à prendre avant** ;
+  alternative locale torch/MPS non vérifiée) ; (3) re-passer
+  `tools/bench_kev_addressed.py` avec comme critère : 0 commande
+  légitime sous le seuil de veto et au moins la moitié de la parole
+  latérale dessous. Intégration envisagée alors : veto dans
+  `voice_guard.py` sur les tours sans mot d'éveil de la fenêtre de suivi
+  seulement (jamais sur un tour avec mot d'éveil, jamais en remplacement
+  du gate locuteur), journalisé en `[filtré: non adressé (p=…)]`.
+- **Verdict : lead parqué, rien d'intégré.** Les incidents consignés
+  (« Merci » de tiers, profil poreux, faux rejets en musique, parole
+  simultanée) sont tous audio/locuteur, un juge textuel n'y voit rien.
+  Poids Kev téléchargés dans `~/.cache/huggingface/hub/models--jaredpalmer--kev-*`
+  (supprimables), dépôt et venv Kev dans le scratchpad de session (jetés).

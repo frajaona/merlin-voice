@@ -422,6 +422,17 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
     éteint » devient le mode d'usage principal. Voir `docs/DECISIONS.md`
     2026-09-06.
 
+16. **Juge textuel « est-ce adressé à Olympia ? » (Kev, lead PARQUÉ le
+    21/10)** : seul trou textuel du gate = parole latérale de l'activateur
+    dans la fenêtre de suivi. Kev-4B (modèle de décision, MLX, 66 ms/tour,
+    3,6 Go, +12 ms sous génération qwen) sépare bien le bavardage ambiant
+    (AUC 0,94) mais fait tomber les commandes musique françaises
+    (« Joue … » 0,32–0,47) avec la parole latérale ; un veto sûr à p < 0,30
+    ne rapporte que ~10 tours réels sur 390. Reprendre seulement après
+    l'item 5 (étiqueter ~400 tours) + fine-tune (décision privacy Modal à
+    prendre avant) ; banc : `tools/bench_kev_addressed.py`. Voir
+    `docs/DECISIONS.md` 2026-10-21.
+
 ## À faire — reliquat de la revue du 13/08 (« The Merlin Review »)
 
 Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
@@ -509,6 +520,10 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   Cactus Whistle (16,9 Mo, CPU) écarté comme STT principal (classe
   Whisper base, pas de WER fr publié) ; leads parqués canal d'éveil fr+en
   et client iOS. Voir `docs/DECISIONS.md` 2026-10-21.
+- **Juge textuel Kev (item 16)** : banc fait le 21/10 sur 390 tours
+  acceptés + 200 hors attention (`tools/bench_kev_addressed.py`) — coût OK,
+  zero-shot français insuffisant, parqué. Voir `docs/DECISIONS.md`
+  2026-10-21.
 - **TTS** : audition **Kyutai Pocket TTS d'abord** (100 M params, temps réel
   sur CPU — soulage le GPU —, français, clonage : une voix propre à Merlin ;
   voir `docs/DECISIONS.md` 2026-08-21), puis Chatterbox Multilingual v3
