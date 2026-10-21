@@ -491,6 +491,13 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   rôle : nemotron (candidat worker delegate), muse-glimmer nvfp4-dflash
   (piste caméra), qwen3.6-nvfp4 (retest prochaine release Ollama). À
   surveiller : un MoE de la génération qwen3.8.
+- ~~Challenger LFM2.5-24B-A2B~~ **éliminé 21/10** : thinking non
+  désactivable (ni `reasoning_effort`, ni `think:false`), 0,8 s médian et
+  jusqu'à 2,2 s en contexte long contre 0,2 à 0,3 s pour qwen, plus un
+  « c'est fait » sans appel d'outil. Voir `docs/DECISIONS.md` 2026-10-21.
+- **Ops : l'auto-update d'Ollama.app décharge le qwen épinglé** (vu le
+  21/10) : couper l'auto-update, ou faire ré-épingler par le
+  monitor/le bot. À trancher. Voir `docs/DECISIONS.md` 2026-10-21.
 - **STT** : jeu de test personnel de ~20 énoncés depuis transcripts.db, puis
   Parakeet v3 (parakeet-mlx) ; **Kyutai STT (`stt-1b-en_fr`, MLX) = upgrade
   stratégique** (transcription streaming 0,5 s de délai, VAD sémantique,
@@ -499,6 +506,9 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   24 s du 19/08) ; service Pipecat custom à écrire ; Unmute écarté
   (orchestration = Pipecat, CUDA-only) ; unification éveil/STT = lead
   séparé, pas dans la même bascule. Voir `docs/DECISIONS.md` 2026-08-21.
+  Cactus Whistle (16,9 Mo, CPU) écarté comme STT principal (classe
+  Whisper base, pas de WER fr publié) ; leads parqués canal d'éveil fr+en
+  et client iOS. Voir `docs/DECISIONS.md` 2026-10-21.
 - **TTS** : audition **Kyutai Pocket TTS d'abord** (100 M params, temps réel
   sur CPU — soulage le GPU —, français, clonage : une voix propre à Merlin ;
   voir `docs/DECISIONS.md` 2026-08-21), puis Chatterbox Multilingual v3

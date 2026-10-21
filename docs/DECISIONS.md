@@ -1820,3 +1820,152 @@ gate (top-3, seuil 0,45, marge 0,15). Référence = les 24 clips français du
 - Effet de bord observé : `stop_secs` 1,0 a **collé les phrases 1 et 2**
   dans un seul clip (pause de Fred < 1 s) — sans conséquence ici ; en usage
   réel c'est le compromis attendu (hésitations vs. deux phrases collées).
+
+## 2026-10-21 — Cactus Whistle (STT 16,9 Mo) : écarté comme STT principal, deux leads parqués (analyse, rien d'implémenté)
+
+Source : billet cactuscompute.com/blog/whistle, carte HF
+`Cactus-Compute/whistle`, repo `cactus-compute/needle` (Apache-2.0).
+Whistle = STT CPU seul (pas de GPU/MLX), 16 kHz mono, 7 langues dont fr
+et en, détection de langue, streaming (« commit des mots sur lesquels
+deux passes s'accordent »), timestamps mot à mot, keyword biasing,
+embeddings d'encodeur par trame de 80 ms. Même moteur que Needle (modèle
+de tool-calling ~50 M effectifs).
+
+- **Écarté comme remplaçant de Whisper turbo fp16.** Son point de
+  comparaison est Whisper **base** (74 M), deux classes sous notre turbo
+  (809 M). WER publiés (chiffres du fournisseur, lus dans
+  `whistle-benchmarks.svg`) : **FLEURS 21,4 %, MLS 24,9 %** en moyenne sur
+  ses langues, **pas de chiffre français isolé**, et derrière Whisper base
+  sur MLS, TED-LIUM et AMI (parole conversationnelle = notre cas). Gain de
+  vitesse (TTFT 11 ms vs ~0,1 s/énoncé pour notre Whisper) : ~90 ms
+  imperceptibles dans ~1,5 s de bout-en-bout (même argument que Q4 → fp16).
+  Donc perte de précision certaine pour un gain de latence invisible, sur
+  une pile où les erreurs STT pèsent déjà (gate, éveil, outils HA).
+  Rien ne rouvre ce verdict sans un WER français mesuré sur nos énoncés.
+- **Ne règle pas les problèmes connus** : il transcrit aussi la musique
+  (dit par la carte elle-même, ce qui reproduit le « Merci. » de Whisper),
+  et le fournisseur recommande un VAD ou un mot d'éveil devant, ce que
+  nous avons déjà.
+- **Needle n'est pas un remplaçant de qwen** : modèle fait pour le
+  tool-calling mobile, qui « sacrifie la capacité de conversation
+  générale » (dixit le repo). Merlin a besoin des deux.
+- **Lead parqué A, canal brut d'éveil/stop** : un seul modèle fr+en avec
+  keyword biasing (« Olympia ») pourrait remplacer le double zipformer du
+  profil `en`. Questions ouvertes à mesurer avant tout code : latence du
+  commit streaming (deux passes) vs ~20 ms du stop zipformer, taux de
+  faux éveils sur bruit et musique. Respecte la règle « une bascule à la
+  fois » (lead « unification éveil/STT », 2026-08-21).
+- **Lead parqué B, client natif iOS** (lead du 2026-09-06) : il y a un build
+  iOS, 17 Mo, CPU. Éveil/stop sur le téléphone sans streamer l'audio
+  en continu vers le Mac. À n'évaluer que si ce lead se réveille.
+- **Si un jour on le teste** : la télémétrie est **active par défaut** dans
+  le binaire. `NEEDLE_TELEMETRY=0` et `DO_NOT_TRACK=1` sont obligatoires
+  (sinon on rompt avec la philosophie locale/privée). Les benchmarks
+  sont ceux du fournisseur. Repo sans release versionnée au 21/10.
+
+## 2026-10-21 — LiquidAI LFM2.5-24B-A2B : éliminé du chemin chaud (thinking non désactivable, mesuré)
+
+Source : carte HF `LiquidAI/LFM2.5-24B-A2B` (sortie ~13/10/2026). MoE
+24 B / **2,45 B actifs** (64 experts, top-4), hybride 30 blocs convolution
+courte + 10 GQA, contexte 128 K, 16 langues dont le français, licence
+`lfm1.0` (pas Apache). Dans Ollama : `lfm2.5:24b` (q4_0, q8_0, bf16),
+capacités `tools` + `thinking`. MLX 4-bit ≈ 13,6 Go (contre 23,9 Go pour
+notre tag ctx32k).
+
+- **Pour, sur papier (chiffres du fournisseur, vs qwen3.6-35B-A3B)** :
+  IFEval 96,75 vs 93,06, ToolSandbox 80,71 vs 75,02, BFCLv4 65,01 vs 65,00.
+  Moins de paramètres actifs, et le prefill est majoritairement
+  convolutionnel, ce qui est le bon profil pour la leçon « contexte long »
+  du 15/08. Il libérerait ~10 Go résidents.
+- **Bloquant n°1 : « pure reasoning model, always thinks before it
+  answers ».** C'est exactement ce qui a éliminé gemma4:26b le 15/08
+  (thinking non désactivable, TTFT 5,7 à 9,7 s). Rien n'indique que
+  `reasoning_effort:"none"` soit honoré. Forcer un `<think></think>` vide
+  est hors distribution pour un modèle entraîné à raisonner, et la qualité
+  n'est pas garantie.
+- **Bloquant n°2 : connaissances faibles.** AA-Omniscience **−24,90**
+  (il hallucine plus qu'il ne répond juste), et la carte le déconseille
+  « for knowledge-heavy tasks » sans RAG. Le nemotron a été éliminé pour
+  avoir inventé la météo : même risque, contraire à la préférence
+  « ne pas agir à tort ». web_search couvre l'actualité, pas les
+  questions générales posées de vive voix.
+- **Moins bon que qwen** : GPQA 74,42 vs 83,69, SWE-Bench 51,0 vs 66,2.
+  Ça compte peu pour la voix, mais ça confirme un modèle plus petit et moins
+  savant.
+- **Format d'outil** : appels Pythonic `<|tool_call_start|>` par défaut.
+  Le parseur Ollama est à vérifier (la leçon nvfp4 dit que le couple
+  modèle/quant change le comportement outils).
+- **Verdict : pas de bascule. Test d'élimination cheap avant tout bench
+  complet** : `reasoning_effort:"none"` sur l'endpoint OpenAI d'Ollama,
+  mesurer le délai jusqu'au premier token de contenu et compter les chunks
+  de raisonnement. Si le délai est au-delà de ~1 s, le modèle est éliminé
+  comme gemma4:26b. S'il passe : protocole standard
+  (`tools/bench_longctx.py`, temp 0,2, 18 cas outils, tour à ~10 k chars),
+  plus 3 à 4 questions de culture générale piégeuses pour mesurer le taux
+  d'invention. Le pull fait ~15 Go, à côté de qwen épinglé (23,9 Go) sur
+  64 Go, et doit se faire sans session téléphone active.
+- **Variante choisie : registre Ollama `lfm2.5:24b-a2b-q4_K_M`** (=
+  `lfm2.5:24b`). Vérifié par sha256 : sa couche modèle est **identique
+  octet pour octet** au `LFM2.5-24B-A2B-Q4_K_M.gguf` de HF (`d3334405…`).
+  Registre ou HF, le choix ne change donc pas les poids. Le registre
+  ajoute seulement la licence et les paramètres d'échantillonnage
+  recommandés par Liquid (temp 0,1, top_k 50, repeat 1,05). bot.py envoie
+  0,2, donc le bench se fait à 0,2 comme toujours. Même famille de quant
+  que qwen (q4_K_M), même chemin que bot.py (endpoint OpenAI d'Ollama),
+  donc comparaison loyale. Si l'étape 1 passe, faire un tag dérivé ctx32k
+  comme pour qwen.
+- **Piège** : le `q4_0` du registre Ollama (`89617cc4…`) n'est **PAS** le
+  `QAD-Q4_0` de HF (`d1c03f73…`, distillé pour récupérer la perte de
+  quantification), malgré la même taille. Le QAD ne s'obtient que via
+  `hf.co/LiquidAI/LFM2.5-24B-A2B-GGUF`. C'est un second candidat,
+  seulement si q4_K_M franchit l'étape 1, avec le bench outils complet
+  refait (leçon nvfp4 : le quant change le comportement outils).
+- MLX 4-bit écarté pour ce test : ce serait un autre runtime que celui
+  de bot.py, donc pas comparable.
+
+**Résultat du test d'élimination (mesuré le 21/10, Ollama 0.40.7,
+`lfm2.5:24b-a2b-q4_K_M-ctx32k`).** Requête identique à bot.py : endpoint
+OpenAI, temp 0,2, `reasoning_effort:"none"`, vrai prompt FR et les 10
+outils des plugins (jamais exécutés). 7 questions ×2 et le tour long
+(~10 k chars) ×3. Scripts dans le scratchpad de session, non versionnés.
+
+- **Le thinking n'est désactivable par AUCUNE voie.** `reasoning_effort:
+  "none"` est ignoré : 46 à 261 chunks (175 à 1 019 chars) de raisonnement
+  sur CHAQUE réponse, comme sans le paramètre. `think:false` sur l'API
+  native : idem (148 à 953 chars). `"low"` : pas de différence nette.
+  Ollama le range bien dans le champ `reasoning`, donc rien ne fuirait
+  dans le TTS. C'est la latence qui paie.
+- **Délai jusqu'au premier contenu ou appel d'outil** : médiane 0,79 s,
+  max 2,21 s. Le tour long fait 1,16 à 2,21 s, et « Salut, ça va ? »
+  1,5 s (le raisonnement s'allonge sur les questions ouvertes, soit
+  justement le bavardage courant). qwen sur le même protocole : 0,18 à
+  0,30 s. Le surcoût est de +0,5 à +1,9 s, dans la zone où mistral
+  (1,54 s médian) a perdu l'A/B au ressenti. **Au-delà du seuil fixé
+  (~1 s) sur le tour long : éliminé, comme gemma4:26b.**
+- **Outils, au passage (pas un bench complet)** : très bonne sélection et
+  bons arguments sur 13/14 essais (météo, web_search `type:"news"` daté,
+  minuteur 600 s, HA). Mais **1 mensonge d'action** : « Allume la lumière
+  de la cuisine » #2 répond « C'est fait, la cuisine est éclairée » SANS
+  appeler l'outil. C'est la pire classe d'erreur pour Fred.
+- **Invention factuelle confirmée** (contrôle « low ») : Canberra « située
+  dans la région des Terres du Nord ». C'est faux (Territoire de la
+  capitale australienne), ce qui recoupe l'AA-Omniscience négatif.
+- **Le QAD-Q4_0 n'est pas testé** et ce n'est pas la peine : le quant ne
+  change pas le fait que le modèle pense toujours. Rien ne rouvre ce verdict
+  sauf une variante sans thinking publiée par Liquid, ou un bot qui
+  accepterait ~1 s de plus (ce n'est pas le cas).
+
+## 2026-10-21 — Ops : l'auto-update d'Ollama.app décharge le modèle épinglé (constat, non corrigé)
+
+Vu pendant le test LFM2.5 : Ollama.app s'est mis à jour tout seul
+(0.40.6 → 0.40.7, `starting upgrade` à 22:45:51 dans
+`~/.ollama/logs/app-1.log`) et a redémarré le serveur. Le qwen épinglé a
+disparu de `ollama ps`. bot.py n'épingle qu'à son propre démarrage
+(`_preload_llm`), donc le premier tour suivant aurait payé un chargement à
+froid, et `com.merlin.monitor` signale « LLM épinglé » en échec jusqu'à un
+restart du bot. Ré-épinglé à la main (`/api/generate`, `keep_alive:-1`).
+L'updater vérifie toutes les heures, donc cela se reproduira. Options (à
+trancher) : couper l'auto-update d'Ollama.app et passer par une mise à
+jour manuelle, ou faire ré-épingler par le monitor quand il voit l'échec
+(il ré-épingle au lieu de seulement alerter), ou faire re-vérifier
+l'épinglage par le bot périodiquement.
