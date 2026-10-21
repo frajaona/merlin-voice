@@ -16,6 +16,9 @@ puis réinstaller.
 - **`com.merlin.monitor`** — `ops/check-ai-stack.sh` toutes les 5 min :
   Ollama :11434, modèle qwen épinglé (`/api/ps`), bot :7860. iMessage via
   `notify.py` sur transition ok↔fail uniquement. Log : `/tmp/merlin-monitor.log`.
+  Si qwen n'est plus chargé (ex. auto-update d'Ollama.app), le monitor le
+  **ré-épingle** (même appel que `_preload_llm`) et ne signale un échec que
+  si ça rate. Chaque ré-épinglage laisse une ligne horodatée dans le log.
 - `ollama serve` n'a pas d'agent à nous : Ollama.app gère son propre démarrage.
 - `~/scripts/check-ai-stack.sh` est un wrapper vers `ops/check-ai-stack.sh`.
 

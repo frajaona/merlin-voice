@@ -40,6 +40,8 @@ the English one. Plugins speak via `lang_profile.phrase(key, params.llm)`.
   `launchctl bootout gui/$(id -u)/com.merlin.bot` first, else the port is held.
 - Monitor: `com.merlin.monitor` runs `ops/check-ai-stack.sh` every 5 min
   (Ollama, modèle épinglé, bot) and iMessages on ok↔fail transitions.
+  If qwen is missing from `/api/ps` it re-pins it itself and only alerts
+  when that fails. Ollama.app auto-updates and drops the model.
 - Dashboard: `https://<host>:7860/` (vanilla JS, RTVI sur le data channel).
   Auth : Bearer token (`data/auth-token` ou `MERLIN_TOKEN`) exigé sur
   `/api/offer`, `/api/workshop*` et `/api/stop` (`dashboard_api.py`).

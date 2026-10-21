@@ -17,8 +17,20 @@ curl -sf --max-time 5 http://localhost:11434/api/version >/dev/null \
 # Tag EXACT (= LLM_MODEL de bot.py) : un grep "qwen" trop lâche répondait ok
 # quand seul le tag de base 262k était chargé (incident Hermes du 2026-08-21).
 PINNED_TAG="qwen3.6:35b-a3b-q4_K_M-ctx32k"
-curl -sf --max-time 5 http://localhost:11434/api/ps | grep -q "\"$PINNED_TAG\"" \
-  && ok "LLM épinglé ($PINNED_TAG)" || fail "LLM épinglé"
+pinned() { curl -sf --max-time 5 http://localhost:11434/api/ps | grep -q "\"$PINNED_TAG\""; }
+# Auto-réparation (2026-10-21) : l'auto-update d'Ollama.app redémarre le
+# serveur et décharge le modèle, or bot.py n'épingle qu'à son démarrage. On
+# ré-épingle avec le même appel que _preload_llm (endpoint NATIF : l'OpenAI-compat
+# traduit mal keep_alive -1), puis on re-vérifie. Alerte seulement si ça échoue.
+if pinned; then
+  ok "LLM épinglé ($PINNED_TAG)"
+elif curl -sf --max-time 120 http://localhost:11434/api/generate \
+       -d "{\"model\":\"$PINNED_TAG\",\"keep_alive\":-1}" >/dev/null && pinned; then
+  echo "$(date '+%F %T') LLM absent de /api/ps -> ré-épinglé"
+  ok "LLM ré-épinglé ($PINNED_TAG)"
+else
+  fail "LLM épinglé"
+fi
 curl -skf --max-time 5 https://localhost:7860/ >/dev/null \
   && ok "Bot :7860" || fail "Bot :7860"
 # Home Assistant (plan de contrôle Sonos — docs/SONOS.md). Vérifié seulement

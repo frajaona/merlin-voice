@@ -1955,7 +1955,7 @@ outils des plugins (jamais exécutés). 7 questions ×2 et le tour long
   sauf une variante sans thinking publiée par Liquid, ou un bot qui
   accepterait ~1 s de plus (ce n'est pas le cas).
 
-## 2026-10-21 — Ops : l'auto-update d'Ollama.app décharge le modèle épinglé (constat, non corrigé)
+## 2026-10-21 — Ops : l'auto-update d'Ollama.app décharge le modèle épinglé → le monitor ré-épingle
 
 Vu pendant le test LFM2.5 : Ollama.app s'est mis à jour tout seul
 (0.40.6 → 0.40.7, `starting upgrade` à 22:45:51 dans
@@ -1964,8 +1964,21 @@ disparu de `ollama ps`. bot.py n'épingle qu'à son propre démarrage
 (`_preload_llm`), donc le premier tour suivant aurait payé un chargement à
 froid, et `com.merlin.monitor` signale « LLM épinglé » en échec jusqu'à un
 restart du bot. Ré-épinglé à la main (`/api/generate`, `keep_alive:-1`).
-L'updater vérifie toutes les heures, donc cela se reproduira. Options (à
-trancher) : couper l'auto-update d'Ollama.app et passer par une mise à
-jour manuelle, ou faire ré-épingler par le monitor quand il voit l'échec
-(il ré-épingle au lieu de seulement alerter), ou faire re-vérifier
-l'épinglage par le bot périodiquement.
+L'updater vérifie toutes les heures, donc cela se reproduira.
+
+- **Décision (Fred) : le monitor ré-épingle.** On garde l'auto-update
+  d'Ollama.app. Dans `ops/check-ai-stack.sh`, si le tag épinglé manque
+  dans `/api/ps`, le monitor fait le même appel que `_preload_llm`
+  (`/api/generate` natif, `keep_alive:-1`, timeout 120 s) puis
+  re-vérifie. S'il est revenu : check ok (« LLM ré-épinglé »), une ligne
+  horodatée dans `/tmp/merlin-monitor.log`, pas de notification. Sinon :
+  échec et alerte comme avant. La fenêtre de trou est au pire de 5 min
+  (intervalle du monitor).
+- **Vérifié** : qwen déchargé à la main → script → ré-épinglé en ~5 s
+  (`Forever` dans `ollama ps`), exit 0, état `ok`. Chemin d'échec testé
+  sur une copie avec un tag inexistant (et la notification neutralisée) :
+  `FAIL LLM épinglé`, exit 1.
+- Effet voulu : un modèle déchargé exprès pour un bench est rechargé
+  dans les 5 min. Avec 64 Go, il cohabite avec un challenger de ~15 Go.
+  Si Ollama manque de mémoire, c'est l'autre modèle qui est évincé (la
+  voix a priorité).
