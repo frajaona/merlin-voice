@@ -9,6 +9,12 @@
     <string>/Users/fred/Developer/ai/merlin-voice/bot.py</string>
   </array>
   <key>WorkingDirectory</key><string>/Users/fred/Developer/ai/merlin-voice</string>
+  <!-- launchd ne donne que /usr/bin:/bin:/usr/sbin:/sbin : sans ceci l'atelier
+       ne trouve ni agy (~/.local/bin) ni codex (/opt/homebrew/bin) — vu le 26/09. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/Users/fred/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>15</integer>

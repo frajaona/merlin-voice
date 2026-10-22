@@ -2057,3 +2057,56 @@ au sort comme négatifs, dernière réponse de l'assistant en contexte).
   simultanée) sont tous audio/locuteur, un juge textuel n'y voit rien.
   Poids Kev téléchargés dans `~/.cache/huggingface/hub/models--jaredpalmer--kev-*`
   (supprimables), dépôt et venv Kev dans le scratchpad de session (jetés).
+
+## 2026-10-22 — Atelier : mort depuis le 26/09 (PATH launchd + modèle agy disparu), nouveau modèle agy mesuré
+
+Question de Fred : « y a-t-il un meilleur modèle pour agy ? ». En vérifiant,
+deux casses silencieuses, cumulées :
+
+- **PATH launchd.** `com.merlin.bot` tourne avec le PATH par défaut de
+  launchd (`/usr/bin:/bin:/usr/sbin:/sbin`) : `agy` (`~/.local/bin`) et
+  `codex` (`/opt/homebrew/bin`, script node) sont introuvables depuis le
+  bot. `data/workshop.log` du 26/09 : `worker agy failed to run: [Errno 2]
+  No such file or directory: 'agy'`, idem codex, « all workers failed for
+  'voir_listes_lecture_sonos' » (demande ensuite écartée). Le 16/08 tout
+  marchait parce que le bot était lancé à la main depuis un shell ; depuis
+  le passage à launchd (18/08) l'atelier n'avait jamais été réessayé.
+  **Fix** : `EnvironmentVariables.PATH` dans `ops/launchd/com.merlin.bot.plist`
+  (`~/.local/bin:/opt/homebrew/bin:/usr/local/bin:` + défaut), plist
+  réinstallé.
+- **`gemini-3.1-pro-high` n'existe plus** dans agy 1.1.15 : `agy models`
+  liste gemini-3.8-flash-{high,medium,low}, claude-sonnet-4-6,
+  claude-opus-4-6-thinking, gpt-oss-120b-medium. Avec l'ancien id agy sort
+  en rc=1 en 5 s (il imprime le catalogue). Même PATH réparé, l'atelier
+  serait donc tombé sur codex (gpt-5.6-sol medium, config codex) à chaque
+  fois. C'est la « dérive silencieuse des CLI » notée le 16/08, deuxième
+  occurrence.
+
+**Banc (22/10)** : le vrai `build_prompt` de `workshop.py` sur la demande
+réelle du 26/09 (« voir les listes de lecture Sonos disponibles »), une
+copie du dépôt par modèle (git worktree, venv lié), `agy -p … --model X`
+avec les flags de prod, puis `gate_ast` + `gate_test` de l'atelier et
+lecture du plugin à la main. Smoke test préalable (« Réponds OK ») : les
+quatre répondent (flash 9 s, opus 15 s, gpt-oss 4 s, sonnet 48 s — latence
+de file, pas reproduite au build).
+
+| Modèle agy | Durée build | Gates | Plugin produit |
+|---|---|---|---|
+| **claude-opus-4-6-thinking** | **92 s** | ✓ | Correct et minimal : `_sonos_common.states/nas_browse/NAS_CATEGORIES/ws_browse`, filler via `lang_profile.phrase("looking")`, `to_thread`, un seul `result_callback`. 2,3 Ko. |
+| claude-sonnet-4-6 | 117 s | ✓ | Correct, plus riche : favoris + NAS + playlists Apple Music (`musicapp_playlists`), argument `source`. 4,6 Ko, test de 10 Ko. |
+| gemini-3.8-flash-high | **583 s** | ✓ | Fonctionnel mais boursouflé (hacks `sys.path`, heuristiques sur les types de favoris, env `MERLIN_SONOS_DEFAULT_ROOM` inventée, `result_callback` possiblement appelé deux fois si le premier lève). 6,5 Ko. À 10 min il frôle le timeout de 900 s. |
+| gpt-oss-120b-medium | 114 s | ✓ | **Données factices** (« Playlist 1…10 », `time.sleep`) avec un docstring qui l'assume. Passe les gates : elles ne testent pas le fond. |
+
+- **Décision : `AGY_MODEL` par défaut = `claude-opus-4-6-thinking`**
+  (`workshop.py`). Le plus rapide ET le plus propre sur ce cas ; sonnet
+  est l'alternative valable (plus complet, un peu plus lent). Flash est
+  6× plus lent pour un code pire ; gpt-oss est disqualifié (il fabrique).
+  Override possible sans code : `AGY_MODEL` dans l'environnement du bot.
+- **Leçon confirmée** : les gates de l'atelier (AST + test auto-généré)
+  valident la forme, jamais le fond — un plugin à données factices passe.
+  La revue humaine avant `approve_skill` reste indispensable (c'est déjà
+  le flux). Un smoke test des workers (« OK » + `agy models` contient
+  `AGY_MODEL`) en tête de `process_one` ou dans `ops/check-ai-stack.sh`
+  éviterait la prochaine dérive silencieuse : lead, pas fait.
+- Candidats des quatre modèles conservés hors dépôt (scratchpad de
+  session) ; rien de l'atelier n'a été commité ni déplacé dans `plugins/`.

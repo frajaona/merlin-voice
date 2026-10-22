@@ -39,3 +39,4 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.merlin.monitor.plist
   réécrit (il surveillait Honcho/Router/Wyoming/docker — l'ancienne stack).
   `com.wyoming.whisper`/`com.wyoming.piper` laissés en place : possiblement
   utilisés par Home Assistant (protocole Wyoming) — à confirmer avant suppression.
+- 2026-10-22 : `EnvironmentVariables.PATH` ajouté à `com.merlin.bot` (`~/.local/bin`, `/opt/homebrew/bin`) — sans lui l'atelier ne trouvait ni `agy` ni `codex` (casse du 26/09). Réinstaller le plist après modification.

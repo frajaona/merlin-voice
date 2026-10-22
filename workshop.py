@@ -27,7 +27,11 @@ CANDIDATES = REPO / "candidates"
 VENV_PYTHON = REPO / "venv" / "bin" / "python"
 
 WORKERS = os.getenv("WORKSHOP_WORKERS", "agy,codex").split(",")
-AGY_MODEL = os.getenv("AGY_MODEL", "gemini-3.1-pro-high")
+# `gemini-3.1-pro-high` a disparu du catalogue agy (1.1.15, 22/10) → agy sortait
+# en rc=1 en 5 s. Banc du 22/10 sur une vraie demande (docs/DECISIONS.md) :
+# opus 92 s / sonnet 117 s corrects, flash 583 s, gpt-oss renvoie des données
+# factices. Vérifier le catalogue avec `agy models` si ça recasse.
+AGY_MODEL = os.getenv("AGY_MODEL", "claude-opus-4-6-thinking")
 WORKER_TIMEOUT_SECS = int(os.getenv("WORKSHOP_TIMEOUT_SECS", "900"))
 
 # Modules a generated plugin may never import. Coarse by design: a candidate

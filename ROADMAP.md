@@ -316,6 +316,15 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   familial** : capture d'éval locuteur sur 20 phrases anglaises et banc
   tool-call anglais (voir « À faire »).
 
+- **2026-10-22** — **Atelier réparé (mort depuis le 26/09)** : (1) PATH
+  launchd — `agy`/`codex` introuvables depuis le bot → `EnvironmentVariables`
+  dans `ops/launchd/com.merlin.bot.plist` ; (2) `gemini-3.1-pro-high` a
+  disparu du catalogue agy → **`AGY_MODEL` = `claude-opus-4-6-thinking`**,
+  tranché sur un banc réel (4 modèles, même prompt, gates de l'atelier +
+  lecture : opus 92 s correct, sonnet 117 s correct, flash 583 s, gpt-oss =
+  données factices). Lead : smoke test des workers dans le monitor. Voir
+  `docs/DECISIONS.md` 2026-10-22.
+
 ## À faire (par ordre de valeur estimée)
 
 1. ~~Top-up du profil de Fred en conditions cuisine + musique~~ **fait 21/08
