@@ -515,6 +515,13 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   désactivable (ni `reasoning_effort`, ni `think:false`), 0,8 s médian et
   jusqu'à 2,2 s en contexte long contre 0,2 à 0,3 s pour qwen, plus un
   « c'est fait » sans appel d'outil. Voir `docs/DECISIONS.md` 2026-10-21.
+- ~~Modèle Apple on-device (AFM 3 Core Advanced, CLI `fm`)~~ **écarté
+  26/10** (analyse de l'article airealist.ai, rien de mesuré : `sudo fm
+  license` accepté, mais modèle inéligible sur ce Mac : langue système
+  en-US ≠ Siri fr-FR, Fred ne change rien) : pas de tool-call
+  documenté, TTFT 0,47–1,6 s, pas de pinning de version, plus
+  d'adaptateurs → ni LLM principal ni juge pour l'item 16 ; seul atout :
+  tourne sur l'ANE, GPU libre. Voir `docs/DECISIONS.md` 2026-10-26.
 - ~~Ops : l'auto-update d'Ollama.app décharge le qwen épinglé~~ **fait
   21/10** : `ops/check-ai-stack.sh` ré-épingle (alerte seulement si ça
   échoue). Voir `docs/DECISIONS.md` 2026-10-21.

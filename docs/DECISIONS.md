@@ -2110,3 +2110,94 @@ de file, pas reproduite au build).
   éviterait la prochaine dérive silencieuse : lead, pas fait.
 - Candidats des quatre modèles conservés hors dépôt (scratchpad de
   session) ; rien de l'atelier n'a été commité ni déplacé dans `plugins/`.
+
+## 2026-10-26 — Modèle Apple on-device (AFM 3 « Core Advanced », CLI `fm`) : écarté, aucun rôle actuel (analyse, rien de mesuré)
+
+Question de Fred : l'article airealist.ai « Exploring Apple's on-device
+model » (Julien Simon, 25/10, dépôt `juliensimon/apple-fm-mac`) est-il
+utile ici ? Ce qu'il établit : le modèle Apple Intelligence de macOS 27
+(« AFM 3 Core Advanced », MoE ~20 B stockés / 1–4 B actifs, ~2 bits par
+poids, experts lus depuis le flash, tokenizer Gemma 3, co-construit avec
+Google) est accessible hors app Swift par `/usr/bin/fm` (`respond`,
+`chat`, `serve`, `schema`, `count-tokens`). Mesuré par l'auteur sur M3 Max
+48 Go : ~2 Gio de RAM (3,4 au pic), décodage 33–58 tok/s, **TTFT 0,47 s à
+20 tokens, 1,6 s à ~2 k tokens, 9,5 s à ~7 k (croissance quadratique)**,
+calcul sur le **Neural Engine, GPU au repos** (~4 W). Fenêtre 8 k mesurée
+(4 k documentée). Qualité : forces annoncées par Apple = résumé,
+extraction, classification, réécriture, dictée/voix ; faiblesses = maths,
+code, raisonnement ; 15 langues dont le français (test de l'auteur
+correct en fr). **Pas de pinning de version** (11/227 verdicts changés
+entre macOS 26.5 et 27.0.1), **plus d'adaptateurs développeur en OS 27**,
+licence `fm` restreignant l'accès programmatique « sauf permission
+Apple ». L'article ne couvre ni le tool-calling ni la génération guidée
+via `fm`, ni la compatibilité OpenAI de `fm serve`.
+
+Vérification locale : `/usr/bin/fm` présent (macOS 27.0.1, M5 Max 64 Go)
+mais refuse tout tant que `sudo fm license` n'a pas été accepté — ça
+engage tous les comptes de la machine, donc décision de Fred, **rien
+lancé, rien mesuré**.
+
+Trois rôles examinés :
+
+- **LLM principal (remplacer qwen3.6:35b-a3b)** : non. Le critère
+  éliminatoire des bancs du 14–15/08 est l'appel d'outil (18/18 pour
+  qwen) et rien n'indique qu'il soit exposé par `fm`. TTFT 0,47 s au
+  mieux et 1,6 s dès ~2 k tokens de contexte (notre prompt + outils +
+  historique), contre 0,30 s pour qwen à contexte long ; 33–58 tok/s
+  contre 110. Faible en raisonnement de l'aveu d'Apple. Et un modèle qui
+  change silencieusement à chaque mise à jour macOS est la même classe
+  de problème que l'auto-update Ollama du 21/10, sans ré-épinglage
+  possible.
+- **Juge « est-ce adressé à Olympia ? » (item 16, lead Kev parqué le
+  21/10)** : c'est le seul endroit où il colle en apparence
+  (classification courte, français, et surtout **ANE = ne touche pas le
+  GPU de qwen/Whisper, 2 Gio** — le seul avantage structurel face à Kev-4B,
+  3,6 Go et +12 ms sous génération). Mais il est génératif : pas de
+  probabilité calibrée, donc pas d'équivalent au veto à p < 0,30 (le
+  genou mesuré) — on retomberait sur l'« auto-score » rejeté le 13/08.
+  Sans adaptateurs, la condition de reprise de l'item 16 (fine-tune sur
+  ~400 tours étiquetés) est impossible. Sans pinning, un juge recalibré
+  par Apple à chaque OS — incompatible avec la règle « ne pas agir plutôt
+  qu'agir à tort ». Et ~0,5 s par tour au lieu de 66 ms.
+- **Hors chemin chaud** (pré-étiquetage des tours de l'item 5, résumés) :
+  qwen local le fait déjà, sans licence CLI machine-wide ni dépendance à
+  l'OS.
+
+**Verdict : écarté, rien d'installé ni d'accepté.** Reprendre seulement
+si (a) Apple expose une sortie calibrée (logprobs / scoring) ou des
+adaptateurs, ou (b) le GPU sature au point que décharger un juge sur
+l'ANE devienne nécessaire — ce qui suppose d'abord l'instrumentation TTFT
+(item latence). Si Fred veut quand même une mesure : `sudo fm license`,
+puis `fm respond` sur ~10 commandes musique françaises et ~10 tours
+latéraux de `transcripts.db` (ceux du banc Kev), question oui/non,
+chrono — une heure, jetable.
+
+### Complément (26/10, 19:50) : licence acceptée, modèle indisponible sur ce Mac — cause trouvée
+
+Fred a accepté `sudo fm license`. `fm serve` démarre (Chat Completions
+OpenAI-compatible, `/v1/chat/completions` streaming, sortie structurée
+par `--schema`, outils intégrés limités à `barcode`/`ocr` — pas d'appel
+d'outil utilisateur dans l'aide) mais **`fm available` → `modelNotReady`
+et toute requête → 503 « model not available »**.
+
+Cause, vérifiée dans la base d'éligibilité de l'OS
+(`/private/var/db/eligibilityd/eligibility.plist`, domaine
+`GREYMATTER` = Apple Intelligence) : réponse `2` (non éligible), toutes
+les entrées à `3` (éligible : pays, classe d'appareil, langue appareil,
+langue Siri, modèle génératif…) **sauf
+`DEVICE_AND_SIRI_LANGUAGE_MATCH = 2`** — langue système `en-US`, Siri
+`fr-FR` (`ELIGIBLE_DEVICE_LANGUAGES = [en]`, `ELIGIBLE_SIRI_LANGUAGE =
+fr-FR`). macOS 27 exige que les deux coïncident. Conséquences visibles :
+le panneau Réglages s'appelle « Siri » tout court (pas de section Apple
+Intelligence), `generativeexperiencesd` journalise
+`isDeviceEligible:false` toggle activé, `FeatureAccessAgent` renvoie
+`deviceNotCapable`, le catalogue modèle n'a pas les assets. Pas de MDM,
+Temps d'écran « Contenu et confidentialité » désactivé — écartés.
+
+Pour mesurer il faudrait soit passer Siri en anglais (US), soit passer
+le Mac en français. **Décision Fred (26/10) : ne rien changer** — la
+langue Siri du foyer et l'interface du Mac priment sur un banc d'un
+modèle déjà écarté sur le papier. Lead clos « non mesurable sur ce
+Mac » ; si un jour les langues coïncident, attendre le téléchargement
+des assets (plusieurs Go) avant `fm available`, puis dérouler le banc
+décrit plus haut.
