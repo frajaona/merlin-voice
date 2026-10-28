@@ -30,8 +30,19 @@ WORKERS = os.getenv("WORKSHOP_WORKERS", "agy,codex").split(",")
 # `gemini-3.1-pro-high` a disparu du catalogue agy (1.1.15, 22/10) → agy sortait
 # en rc=1 en 5 s. Banc du 22/10 sur une vraie demande (docs/DECISIONS.md) :
 # opus 92 s / sonnet 117 s corrects, flash 583 s, gpt-oss renvoie des données
-# factices. Vérifier le catalogue avec `agy models` si ça recasse.
-AGY_MODEL = os.getenv("AGY_MODEL", "claude-opus-4-6-thinking")
+# factices. Le soir même le catalogue a basculé (déploiement progressif,
+# deux backends pendant ~1 h) : claude-4-6 disparu, Opus/Sonnet 5.5 et
+# Gemini 4 Argon arrivés. Re-banc 22/10 22:10 même demande : sonnet-5-5-high
+# 59 s, opus-5-5-high 136 s, gemini-4-argon-high 253 s, tous corrects ;
+# flash-3.8-high 583 s (sous le timeout de 900 s) en dernier recours. Liste
+# ordonnée : un modèle refusé fait sortir agy en quelques secondes
+# (« invalid model selection » / « NOT_FOUND ») → on passe au suivant.
+AGY_MODELS = [m.strip() for m in os.getenv(
+    "AGY_MODEL",
+    "claude-sonnet-5-5-high,claude-opus-5-5-high,gemini-4-argon-high,gemini-3.8-flash-high",
+).split(",") if m.strip()]
+AGY_MODEL = AGY_MODELS[0]
+_AGY_MODEL_REJECTED = re.compile(r"invalid model selection|NOT_FOUND \(code 404\)")
 WORKER_TIMEOUT_SECS = int(os.getenv("WORKSHOP_TIMEOUT_SECS", "900"))
 
 # Modules a generated plugin may never import. Coarse by design: a candidate
@@ -101,29 +112,45 @@ Crée exactement deux fichiers, et ne modifie AUCUN autre fichier :
 Ne fais aucun commit git. Quand les deux fichiers sont écrits et que le test passe, termine."""
 
 
+def agy_cmd(prompt: str, model: str) -> list[str]:
+    return ["agy", "-p", prompt, "--dangerously-skip-permissions",
+            "--model", model, "--print-timeout", f"{WORKER_TIMEOUT_SECS}s"]
+
+
 def run_worker(worker: str, prompt: str) -> bool:
     worker = worker.strip()
     if worker == "agy":
-        cmd = ["agy", "-p", prompt, "--dangerously-skip-permissions",
-               "--model", AGY_MODEL, "--print-timeout", f"{WORKER_TIMEOUT_SECS}s"]
-    elif worker == "codex":
+        for model in AGY_MODELS:
+            rc, output = _run_cli(f"agy ({model})", agy_cmd(prompt, model))
+            if rc == 0:
+                return True
+            if rc is not None and _AGY_MODEL_REJECTED.search(output or ""):
+                log(f"agy: model '{model}' rejected by the catalogue, trying the next one")
+                continue
+            return False
+        return False
+    if worker == "codex":
         # `--full-auto` n'existe plus sur `exec` (vérifié codex-cli 0.147.0) :
         # exec est non interactif, le sandbox workspace-write suffit pour
         # écrire les deux fichiers candidats et lancer le smoke test.
-        cmd = ["codex", "exec", "--sandbox", "workspace-write", prompt]
-    else:
-        log(f"unknown worker '{worker}', skipping")
-        return False
-    log(f"worker {worker} starting")
+        rc, _ = _run_cli("codex", ["codex", "exec", "--sandbox", "workspace-write", prompt])
+        return rc == 0
+    log(f"unknown worker '{worker}', skipping")
+    return False
+
+
+def _run_cli(label: str, cmd: list[str]) -> tuple[int | None, str]:
+    """(returncode, stdout+stderr) ; (None, "") si la CLI n'a pas pu tourner."""
+    log(f"worker {label} starting")
     try:
         result = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
                                 timeout=WORKER_TIMEOUT_SECS)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        log(f"worker {worker} failed to run: {e}")
-        return False
-    tail = (result.stdout or result.stderr or "").strip()[-400:]
-    log(f"worker {worker} exited rc={result.returncode}; tail: {tail}")
-    return result.returncode == 0
+        log(f"worker {label} failed to run: {e}")
+        return None, ""
+    output = (result.stdout or "") + (result.stderr or "")
+    log(f"worker {label} exited rc={result.returncode}; tail: {output.strip()[-400:]}")
+    return result.returncode, output
 
 
 def gate_ast(plugin_path: Path) -> str | None:

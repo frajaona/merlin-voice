@@ -2111,6 +2111,106 @@ de file, pas reproduite au build).
 - Candidats des quatre modèles conservés hors dépôt (scratchpad de
   session) ; rien de l'atelier n'a été commité ni déplacé dans `plugins/`.
 
+## 2026-10-22 — Monitor : smoke test des workers de l'atelier ; le catalogue agy bascule d'un appel à l'autre
+
+Demande de Fred (suite de l'entrée précédente) : mettre le smoke test des
+workers dans le monitor.
+
+- **Ce que fait le check** (`ops/check-ai-stack.sh`, toutes les 5 min avec
+  le reste) : il appelle les CLI exactement comme `workshop.run_worker`
+  (`agy -p "Réponds uniquement OK." --model X --print-timeout 120s`, puis
+  `codex exec --sandbox read-only`), avec les modèles de
+  `workshop.AGY_MODELS` dans l'ordre. Appels cloud réels (~10–30 s), donc
+  **une fois par 24 h tant que c'est ok, toutes les heures après un
+  échec** ; le verdict persiste dans `/tmp/merlin-workers.state` (mtime =
+  dernier smoke) et compte comme un check à chaque run, pour que l'alerte
+  suive la mécanique ok↔fail existante sans battre. Sortie brute du dernier
+  CLI dans `.state.out` pour le diagnostic. Le script exporte lui-même le
+  PATH du bot (`~/.local/bin`, `/opt/homebrew/bin`) : launchd ne le donne
+  pas au monitor non plus. Pas de `coreutils timeout` sur macOS →
+  `perl -e 'alarm'`. Vérifié sur une copie à notification neutralisée :
+  succès (5 ok, 9 s), run suivant sans nouveau smoke, échec
+  (`AGY_MODEL=modele-bidon,…` → « FAIL atelier : agy : aucun modèle
+  accepté », message de notification formé), run suivant toujours en échec
+  sans re-smoke.
+- **Écarté : gater sur `agy models`.** Première version du check — elle
+  échouait une fois sur deux alors que le modèle était bien là. Cause
+  trouvée en traçant : **le catalogue agy n'est pas stable d'un appel à
+  l'autre**. Trois `agy models` en 10 s le 22/10 ~21:50 : deux fois
+  {gemini-3.8-flash-*, claude-sonnet-4-6, claude-opus-4-6-thinking,
+  gpt-oss-120b-medium}, une fois {gemini-4-argon-*, gemini-3.8-flash-*,
+  claude-opus-5-5-*, claude-sonnet-5-5-*, gpt-oss-120b-medium}. Un
+  `agy -p … --model claude-opus-4-6-thinking` tombe donc aléatoirement sur
+  « invalid model selection » (rc=1, 2–5 s) — vu en vrai à 21:53 sur le
+  modèle qui avait réussi le build de 17:00. Déploiement progressif côté
+  Google, vraisemblablement (deux backends derrière la même CLI).
+- **Les nouveaux modèles ne sont pas utilisables aujourd'hui** :
+  `claude-opus-5-5-{high,medium}` → `NOT_FOUND (code 404)` 5/5 quand la
+  requête atteint le nouveau catalogue ; `gemini-4-argon-high` répond
+  « OK » 2 fois sur 8 au smoke, mais 404 au premier build qui a atteint le
+  nouveau catalogue (rc=3 en 8 s, après 8 essais tombés sur l'ancien).
+  Non benché sur un build. **À re-tester quand ils répondent de façon
+  stable** (`agy -p "Réponds OK" --model claude-opus-5-5-high` ×5) — un
+  Opus 5.5 remplacerait naturellement le 4.6 en tête de liste.
+- **Décision : `AGY_MODEL` = liste ordonnée, défaut
+  `claude-opus-4-6-thinking,gemini-3.8-flash-high`.** `run_worker` passe
+  au modèle suivant **seulement** sur un refus de catalogue (regex
+  `invalid model selection|NOT_FOUND (code 404)`, sortie en quelques
+  secondes, rien d'écrit) ; un vrai échec de build (autre rc≠0, timeout)
+  ne relance pas le même build sur un autre modèle (coût, candidat partiel
+  à jeter) et laisse la main à codex comme avant. flash-3.8-high est dans
+  les deux catalogues : lent (583 s au banc) mais sous le timeout, et son
+  code passe les gates. Tests hors-ligne : `tools/test_workshop_workers.py`
+  (faux `agy` en tête d'un PATH réduit : acceptation, bascule, tous
+  refusés, vrai échec sans bascule, CLI absente).
+- **Coût accepté** : au pire ~5 s de refus avant flash ; en régime normal
+  le smoke quotidien fait 2 à 3 appels cloud triviaux par jour.
+
+### Complément (22/10, 22:00–22:15) : le catalogue s'est stabilisé, re-banc Claude 5.5
+
+Une heure après l'entrée ci-dessus, quatre `agy models` consécutifs ne
+renvoient plus que le nouveau catalogue (gemini-4-argon-*, gemini-3.8-flash-*,
+claude-opus-5-5-*, claude-sonnet-5-5-*, gpt-oss-120b-medium) et les
+nouveaux modèles répondent (plus de 404) : smoke « OK » sonnet-5-5-high
+3/3, opus-5-5-high 2/3, argon-high 2/3 (les ratés = « invalid model
+selection », l'ancien backend qui sert encore quelques requêtes) ;
+**claude-opus-4-6-thinking refusé 3/3** — la tête de liste choisie à 17 h
+était morte, chaque build serait tombé sur flash (10 min).
+
+Même banc que l'après-midi (vrai `build_prompt`, demande « listes de
+lecture Sonos », gates + lecture), relance automatique sur refus de
+catalogue :
+
+| Modèle agy | Durée build | Gates | Plugin produit |
+|---|---|---|---|
+| **claude-sonnet-5-5-high** | **59 s** | ✓ | Correct et complet : 4 sources isolées (favoris, NAS, alias du foyer, Apple Music), dédoublonnage via `common.norm`, plafond 25 par source « lu à voix haute », note exacte sur les playlists Apple Music non jouables (phase 3 de `docs/SONOS.md`). Imports propres. 5,4 Ko. |
+| claude-opus-5-5-high | 136 s | ✓ | Correct : favoris + NAS, arguments `filtre` et `source`, saute les enceintes `unavailable`, compte le débordement. Un hack `sys.path` inutile en tête. 6,3 Ko. |
+
+- **Décision : `AGY_MODEL` par défaut =
+  `claude-sonnet-5-5-high,claude-opus-5-5-high,gemini-3.8-flash-high`.**
+  Sonnet 5.5 est le plus rapide de toute la série (59 s contre 92 s pour
+  l'Opus 4.6 de l'après-midi) et son code est le plus propre ; Opus 5.5 en
+  second (même catalogue, légèrement plus lent, aussi juste) ; flash en
+  dernier recours. gpt-oss reste disqualifié, Argon non benché sur un
+  build (2/3 au smoke seulement).
+- **Leçon** : un modèle de CLI cloud est une donnée périssable à l'heure
+  près pendant un déploiement. La liste ordonnée + le smoke quotidien du
+  monitor sont la réponse ; ne pas re-figer un id unique.
+
+### Complément (22/10, 22:20) : Gemini 4 Argon benché
+
+Question de Fred. Même banc, catalogue stabilisé, premier essai accepté :
+
+| Modèle agy | Durée build | Gates | Plugin produit |
+|---|---|---|---|
+| gemini-4-argon-high | 253 s | ✓ | Correct : 4 sources (favoris, NAS, alias, Apple Music), filtre `recherche`, dédoublonnage `common.norm`, erreurs isolées par source, filler `lang_profile.phrase`. Pas de plafond « lu à voix haute » (Sonnet et Opus 5.5 en mettent un). 5,5 Ko. |
+
+- **Décision : Argon en troisième position**, avant flash-3.8-high —
+  `claude-sonnet-5-5-high,claude-opus-5-5-high,gemini-4-argon-high,gemini-3.8-flash-high`.
+  4× plus lent que Sonnet 5.5 pour un code équivalent, mais 2× plus
+  rapide que Flash pour un code meilleur. Flash reste en dernier recours
+  (il était dans les deux catalogues pendant la bascule ; ne coûte rien).
+
 ## 2026-10-26 — Modèle Apple on-device (AFM 3 « Core Advanced », CLI `fm`) : écarté, aucun rôle actuel (analyse, rien de mesuré)
 
 Question de Fred : l'article airealist.ai « Exploring Apple's on-device

@@ -322,8 +322,20 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   disparu du catalogue agy → **`AGY_MODEL` = `claude-opus-4-6-thinking`**,
   tranché sur un banc réel (4 modèles, même prompt, gates de l'atelier +
   lecture : opus 92 s correct, sonnet 117 s correct, flash 583 s, gpt-oss =
-  données factices). Lead : smoke test des workers dans le monitor. Voir
-  `docs/DECISIONS.md` 2026-10-22.
+  données factices). Voir `docs/DECISIONS.md` 2026-10-22.
+- **2026-10-22** — **Smoke test des workers dans le monitor** (fait le jour
+  même) : `ops/check-ai-stack.sh` appelle agy et codex pour de vrai une fois
+  par 24 h (toutes les heures après échec), verdict persistant, alerte sur
+  transition. En le testant : **le catalogue agy bascule d'un appel à
+  l'autre** entre deux versions (claude 4.6 dans l'une, Opus/Sonnet 5.5 —
+  et Gemini 4 Argon dans l'autre) → `AGY_MODEL` devient une liste ordonnée,
+  `run_worker` passe au suivant sur « invalid model selection »/404 et
+  jamais sur un vrai échec de build. Une heure plus tard le catalogue
+  s'est stabilisé sur la nouvelle version (claude-4-6 parti pour de bon) :
+  re-banc → **`claude-sonnet-5-5-high,claude-opus-5-5-high,gemini-4-argon-high,gemini-3.8-flash-high`**
+  (sonnet 59 s, opus 136 s, argon 253 s, tous corrects). Tests :
+  `tools/test_workshop_workers.py` (faux agy). Voir `docs/DECISIONS.md`
+  2026-10-22.
 
 ## À faire (par ordre de valeur estimée)
 

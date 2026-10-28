@@ -14,8 +14,15 @@ puis réinstaller.
   `launchctl bootout gui/$(id -u)/com.merlin.bot`, puis `venv/bin/python bot.py`.
   stdout/stderr : `/tmp/merlin-bot.log` (les vrais logs restent `data/merlin.log`).
 - **`com.merlin.monitor`** — `ops/check-ai-stack.sh` toutes les 5 min :
-  Ollama :11434, modèle qwen épinglé (`/api/ps`), bot :7860. iMessage via
+  Ollama :11434, modèle qwen épinglé (`/api/ps`), bot :7860, Home Assistant
+  (si token), **workers de l'atelier** (agy + codex). iMessage via
   `notify.py` sur transition ok↔fail uniquement. Log : `/tmp/merlin-monitor.log`.
+  Le check workers est un vrai smoke (« Réponds OK » via les CLI, mêmes
+  flags que `workshop.run_worker`, modèles de `workshop.AGY_MODELS` dans
+  l'ordre) : une fois par 24 h tant que c'est ok, toutes les heures après
+  un échec ; verdict persistant dans `/tmp/merlin-workers.state` (sortie
+  brute du dernier CLI dans `.state.out`). Le script exporte lui-même le
+  PATH (`~/.local/bin`, `/opt/homebrew/bin`), pas besoin de plist.
   Si qwen n'est plus chargé (ex. auto-update d'Ollama.app), le monitor le
   **ré-épingle** (même appel que `_preload_llm`) et ne signale un échec que
   si ça rate. Chaque ré-épinglage laisse une ligne horodatée dans le log.
@@ -40,3 +47,4 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.merlin.monitor.plist
   `com.wyoming.whisper`/`com.wyoming.piper` laissés en place : possiblement
   utilisés par Home Assistant (protocole Wyoming) — à confirmer avant suppression.
 - 2026-10-22 : `EnvironmentVariables.PATH` ajouté à `com.merlin.bot` (`~/.local/bin`, `/opt/homebrew/bin`) — sans lui l'atelier ne trouvait ni `agy` ni `codex` (casse du 26/09). Réinstaller le plist après modification.
+- 2026-10-22 : smoke test des workers de l'atelier ajouté au monitor (dérive silencieuse des CLI : 16/08, 26/09). Rien à réinstaller — le script est relu à chaque run.
