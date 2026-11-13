@@ -40,6 +40,28 @@ class TranscriptStore:
             self._conn.execute("ALTER TABLE turns ADD COLUMN lang TEXT")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns(ts)")
+        # Per-turn latency (2026-10-28): one row per user→bot cycle, written by
+        # bot.py from pipecat's UserBotLatencyObserver (see latency_metrics.py
+        # for what each column measures; tools/latency_report.py to read it).
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS latency (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                ts TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN ('turn', 'first')),
+                total_secs REAL,
+                user_turn_secs REAL,
+                stt_secs REAL,
+                llm_ttfb_secs REAL,
+                llm_runs INTEGER,
+                tts_ttfb_secs REAL,
+                tools_secs REAL,
+                tools TEXT,
+                detail TEXT,
+                lang TEXT
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_latency_ts ON latency(ts)")
         self._conn.commit()
 
     def append(self, session_id: str, role: str, content: str, speaker: str | None = None,
@@ -66,5 +88,20 @@ class TranscriptStore:
                     speaker,
                     lang,
                 ),
+            )
+            self._conn.commit()
+
+    LATENCY_COLS = ("session_id", "kind", "total_secs", "user_turn_secs", "stt_secs",
+                    "llm_ttfb_secs", "llm_runs", "tts_ttfb_secs", "tools_secs", "tools",
+                    "detail", "lang")
+
+    def append_latency(self, row: dict):
+        """Synchronous insert of one latency record (latency_metrics.to_row)."""
+        with self._lock:
+            self._conn.execute(
+                f"INSERT INTO latency (ts, {', '.join(self.LATENCY_COLS)}) "
+                f"VALUES (?, {', '.join('?' * len(self.LATENCY_COLS))})",
+                (datetime.datetime.now().isoformat(timespec="seconds"),
+                 *[row.get(c) for c in self.LATENCY_COLS]),
             )
             self._conn.commit()

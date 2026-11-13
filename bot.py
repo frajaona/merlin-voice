@@ -38,7 +38,8 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.worker import PipelineWorker
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+from pipecat.observers.user_bot_latency_observer import UserBotLatencyObserver
 from pipecat.workers.runner import WorkerRunner
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.frames.frames import (
@@ -223,6 +224,7 @@ def load_plugins() -> dict:
 
 
 from transcript_store import TranscriptStore
+import latency_metrics
 
 TRANSCRIPTS = TranscriptStore()
 
@@ -553,12 +555,68 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection, lang: str = "fr"):
     # text, speaking state, tool calls (FULL = args + results — LAN behind
     # the shared token, and the plugins are household tools, not secrets),
     # plus the custom gate-decision messages pushed by VoiceGate.
+    # Per-turn latency (2026-10-28): enable_metrics turns on the TTFB /
+    # processing metrics of Whisper, the LLM and Kokoro (off by default in
+    # pipecat); UserBotLatencyObserver measures user silence → first bot
+    # audio and collects those metrics per cycle. One INFO line per turn
+    # (grep `Latency`), a row in transcripts.db (table `latency`) and a
+    # `latency` server-message for the dashboard. The raw per-metric RTVI
+    # messages are NOT forwarded (metrics_enabled=False): the summary is
+    # what the dashboard shows, and the data channel stays quiet.
+    latency_observer = UserBotLatencyObserver()
     worker = PipelineWorker(
         pipeline,
+        params=PipelineParams(enable_metrics=True, send_initial_empty_metrics=False),
+        observers=[latency_observer],
         rtvi_observer_params=RTVIObserverParams(
             function_call_report_level={"*": RTVIFunctionCallReportLevel.FULL},
+            metrics_enabled=False,
         ),
     )
+
+    # The observer fires on_latency_measured (total) and on_latency_breakdown
+    # (per-stage detail) back to back from the same BotStartedSpeakingFrame;
+    # the breakdown alone carries no total, so the total is held in between.
+    pending_latency: dict = {"total": None, "first": None}
+
+    @latency_observer.event_handler("on_first_bot_speech_latency")
+    async def on_first_bot_speech_latency(observer, latency: float):
+        pending_latency["first"] = latency
+
+    @latency_observer.event_handler("on_latency_measured")
+    async def on_latency_measured(observer, latency: float):
+        pending_latency["total"] = latency
+
+    @latency_observer.event_handler("on_latency_breakdown")
+    async def on_latency_breakdown(observer, breakdown):
+        first = pending_latency["first"]
+        total = pending_latency["total"]
+        pending_latency["first"] = pending_latency["total"] = None
+        if total is None and first is None:
+            return
+        rec = latency_metrics.summarize(
+            breakdown, total if total is not None else first, first_turn=total is None
+        )
+        if rec["llm"] is None and not rec["first_turn"]:
+            # Bot speech with no LLM run in the cycle: asynchronous speech
+            # (timer alarm, filler of a typed turn) after a rejected or
+            # silent utterance — not a latency.
+            logger.debug(f"Latency skipped (no LLM run): {latency_metrics.format_line(rec)}")
+            return
+        logger.info(latency_metrics.format_line(rec))
+        await asyncio.to_thread(
+            TRANSCRIPTS.append_latency, latency_metrics.to_row(rec, session_id, profile.code)
+        )
+        await worker.rtvi.send_server_message(latency_metrics.to_message(rec))
+
+    if worker.turn_tracking_observer is not None:
+        @worker.turn_tracking_observer.event_handler("on_turn_ended")
+        async def on_turn_ended(observer, turn_count: int, duration: float, was_interrupted: bool):
+            # Whole exchange (user speech start → bot speech end) — the felt
+            # length of a multi-step tool turn, which the TTFB line above
+            # stops measuring at the first spoken filler.
+            logger.info(f"Turn {turn_count} ended: {duration:.1f}s"
+                        + (" (interrupted)" if was_interrupted else ""))
 
     # Typed chat from the dashboard. Deliberately NOT RTVI's native send-text:
     # its transient skip_tts toggle only covers the first LLM run, so a silent

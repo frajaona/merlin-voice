@@ -57,6 +57,8 @@ the English one. Plugins speak via `lang_profile.phrase(key, params.llm)`.
   `pkill -f "python bot.py"` (macOS process name is capital-P `Python`; a
   half-dead process once kept serving stale code).
 - Logs: `data/merlin.log` (rotating). Gate decisions: grep `VoiceGate`.
+  Latence par tour (2026-10-28): grep `Latency` (silence → première parole,
+  avec STT / TTFB LLM / TTS / outils ; `Turn N ended` = durée de l'échange).
   Wake engine: grep `wake word`; `MERLIN_WAKE_DEBUG=1` logs live partials
   (very verbose — never leave it on).
 - Transcripts: `data/transcripts.db` (sqlite, table `turns`); rejected turns
@@ -65,11 +67,14 @@ the English one. Plugins speak via `lang_profile.phrase(key, params.llm)`.
   (2026-08-18): enrolled name the gate attributed the turn to, NULL when
   unknown (assistant rows, filtered turns, `[clavier]`, fail-open paths).
   Exception: turns rejected during the privacy hold ("Olympia chut") are NOT
-  stored at all — by design, do not "fix" this.
+  stored at all — by design, do not "fix" this. Table `latency` (2026-10-28):
+  one row per user→bot cycle (`latency_metrics.py` documents the columns);
+  read it with `tools/latency_report.py`.
 - Voice profiles: `tools/voice_profile.py [status|enroll|cancel|reset]`
   (enroll on a complete profile opens a diversity top-up).
-- Tests (offline, no bot needed): `venv/bin/python tools/test_voice_guard.py`
-  and `tools/test_wake_word.py` (both cover the `en` profile too).
+- Tests (offline, no bot needed): `venv/bin/python tools/test_voice_guard.py`,
+  `tools/test_wake_word.py` (both cover the `en` profile too),
+  `tools/test_workshop_workers.py`, `tools/test_latency_metrics.py`.
   End-to-end with the bot running: `tools/probe_rtvi.py` (`MERLIN_PROBE_LANG=en`
   for an English session).
 

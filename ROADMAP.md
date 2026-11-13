@@ -336,6 +336,17 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
   (sonnet 59 s, opus 136 s, argon 253 s, tous corrects). Tests :
   `tools/test_workshop_workers.py` (faux agy). Voir `docs/DECISIONS.md`
   2026-10-22.
+- **2026-10-28** — **Latence par tour instrumentée** (lead du 19/08, préalable
+  à tout tuning de latence et à Kyutai STT) : `enable_metrics` pipecat +
+  `UserBotLatencyObserver` → par tour, silence de l'utilisateur → première
+  parole du bot, avec STT / TTFB LLM / TTS / outils. Une ligne `Latency`
+  dans le log, une ligne par tour dans `transcripts.db` (table `latency`),
+  la dernière mesure sous l'orbe du dashboard ; `tools/latency_report.py`
+  pour la médiane/p90 par étape et les tours les plus lents. Le premier
+  tour après connexion (les ~35 s du 19/08) est mesuré à part. Tests :
+  `tools/test_latency_metrics.py`. **Pas encore vérifié en session réelle**
+  (téléphone connecté au moment du déploiement — redémarrage reporté).
+  Voir `docs/DECISIONS.md` 2026-10-28.
 
 ## À faire (par ordre de valeur estimée)
 
@@ -513,8 +524,10 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 - **Latence en conversation chargée (constat du 19/08)** : une génération
   LLM de 24 s pendant un brouhaha continu (STT/éveil/embeddings sur le
   même GPU que qwen, + interruption d'agrégation juste avant), et ~35 s
-  sur le premier tour après un restart du bot (vu 2×). Instrumenter le
-  TTFT par tour (métriques pipecat) avant tout tuning.
+  sur le premier tour après un restart du bot (vu 2×). ~~Instrumenter le
+  TTFT par tour (métriques pipecat) avant tout tuning.~~ **Instrumentation
+  faite le 28/10** (table `latency`, `tools/latency_report.py`) ; reste à
+  lire une semaine d'usage réel avant de toucher à quoi que ce soit.
 
 - **LLM, étape 0 — FAIT 14/08, verdict : rester sur q4_K_M.** nvfp4/MLX
   mesuré : TTFT médian 0,09 s vs 0,33 s mais régression tool-call (9/15 vs
@@ -548,7 +561,8 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
 - **STT** : jeu de test personnel de ~20 énoncés depuis transcripts.db, puis
   Parakeet v3 (parakeet-mlx) ; **Kyutai STT (`stt-1b-en_fr`, MLX) = upgrade
   stratégique** (transcription streaming 0,5 s de délai, VAD sémantique,
-  timestamps mots) mais **bloqué derrière l'instrumentation TTFT** (un 1B
+  timestamps mots) mais **bloqué derrière la mesure de latence** (instrumentation
+  faite le 28/10 — lire une semaine d'usage avec `tools/latency_report.py` ; un 1B
   qui transcrit en continu sur le GPU du qwen épinglé = le scénario des
   24 s du 19/08) ; service Pipecat custom à écrire ; Unmute écarté
   (orchestration = Pipecat, CUDA-only) ; unification éveil/STT = lead

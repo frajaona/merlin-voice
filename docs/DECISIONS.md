@@ -2302,6 +2302,63 @@ Mac » ; si un jour les langues coïncident, attendre le téléchargement
 des assets (plusieurs Go) avant `fm available`, puis dérouler le banc
 décrit plus haut.
 
+## 2026-10-28 — Latence par tour instrumentée (TTFT par étape) — préalable du 19/08
+
+Demande de Fred (« do 2 » de la liste du jour) : instrumenter le TTFT par
+tour avant tout tuning de latence — lead du 19/08 (génération de 24 s en
+brouhaha, ~35 s au premier tour après restart), et préalable explicite de
+Kyutai STT (un 1B en continu sur le GPU du qwen).
+
+- **Ce qui existe déjà dans pipecat 1.3.0 et qu'on branche** :
+  `PipelineParams(enable_metrics=True)` (off par défaut — jusqu'ici aucun
+  service n'émettait de TTFB, et les `start_processing_metrics` de
+  `GuardedWhisperSTT` étaient des no-op) et
+  `pipecat.observers.user_bot_latency_observer.UserBotLatencyObserver` :
+  mesure silence réel de l'utilisateur (VAD stop, corrigé de `stop_secs`)
+  → `BotStartedSpeakingFrame`, et accumule entre les deux les TTFB des
+  services + les durées d'appels d'outil. Rien de réécrit côté mesure.
+- **Ce qu'on en fait** (`latency_metrics.py`, `bot.py`) : une ligne INFO
+  `Latency tour: total 1.42s | fin de tour 0.90s | STT 0.31s | LLM TTFB
+  0.52s | TTS 0.18s` par tour ; une ligne dans `transcripts.db` (table
+  `latency` : kind turn/first, total, user_turn, stt, llm_ttfb, llm_runs,
+  tts_ttfb, tools, detail JSON, lang) ; un server-message RTVI `latency`
+  affiché sous l'orbe du dashboard. `tools/latency_report.py` : médiane /
+  p90 / max par étape, premiers tours, N tours les plus lents avec le texte
+  du tour. `Turn N ended: 12.3s` (TurnTrackingObserver, déjà actif) donne
+  en plus la durée de l'échange complet.
+- **Sémantique à garder en tête en lisant les chiffres** :
+  - `total` = silence → **première** parole. Sur un tour à outil avec
+    filler parlé (« Je regarde ça. ») c'est le temps jusqu'au filler ; la
+    réponse finale n'est pas mesurée à part (l'observer remet ses
+    compteurs à zéro à la première parole). Le « 12 s ressenties » d'un
+    tour multi-étapes se lit dans `Turn N ended`, pas dans `total`.
+  - `llm` = TTFB du **premier** run LLM du cycle (prefill + premier token),
+    `llm_runs` compte les runs vus avant la première parole.
+  - `stt` = TTFB Whisper au sens pipecat (segment remis → transcription),
+    pas « fin de parole → transcription » ; `user_turn` (silence → tour
+    relâché par l'agrégateur) couvre ce délai-là, VAD `stop_secs` compris.
+  - `first` = connexion → première parole — ne se produira pas tant que le
+    bot ne parle pas en premier (pipecat n'émet cet événement que si aucune
+    parole utilisateur n'a précédé). Le cas « ~35 s après restart » est
+    donc simplement le **premier `turn` de chaque session**, que
+    `latency_report.py` isole.
+  - Une parole du bot sans run LLM dans le cycle (alarme du minuteur,
+    filler d'un tour clavier après un énoncé rejeté) est **ignorée**
+    (DEBUG `Latency skipped`) : ce n'est pas une latence.
+- **Les messages RTVI `metrics` bruts ne sont pas transmis au dashboard**
+  (`metrics_enabled=False`) : un message par métrique par tour encombrerait
+  le canal, le résumé suffit ; à rouvrir pour un dashboard v2.
+- **Coût** : nul sur le chemin chaud (compteurs `time.time()` dans les
+  services, un `to_thread` d'insert sqlite par tour).
+- **État au 28/10, 10 h : code testé hors-ligne (`tools/test_latency_metrics.py`,
+  régressions voice_guard/workshop OK), PAS vérifié en session réelle** :
+  un téléphone était connecté (`/api/health` connections=1) au moment de
+  déployer, donc pas de `kickstart`. À faire au prochain redémarrage : un
+  tour vocal réel → vérifier la ligne `Latency` dans le log, la ligne
+  sous l'orbe, puis `tools/latency_report.py`. Décision de tuning :
+  **aucune avant une semaine d'usage** — la question du 19/08 (contention
+  GPU en brouhaha ?) se lira dans les tours les plus lents du rapport.
+
 ## 2026-11-13 — LiquidCodec / LFM3-Audio-2B : aucun rôle dans la boucle actuelle, candidat local parqué pour le « mode débat » (analyse, rien de mesuré)
 
 Source : billet Liquid AI « LiquidCodec » (https://www.liquid.ai/blog/liquidcodec),
