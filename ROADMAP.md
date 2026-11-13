@@ -412,6 +412,14 @@ Suivi des améliorations progressives. Mis à jour à chaque session de travail.
     boucle principale (audio continu vers le cloud = rupture voice_guard).
     Exige sa propre décision privacy dans `docs/DECISIONS.md` avant tout
     code. Voir `docs/DECISIONS.md` 2026-08-21.
+    **Candidat LOCAL (lead parqué le 13/11)** : LFM3-Audio-2B (Liquid AI,
+    GGUF llama.cpp) avec son codec LiquidCodec (~74 M, 12,5 Hz, causal) —
+    lèverait l'objection privacy du cloud pour ce mode seulement. Reste
+    parqué : ne remplace PAS la boucle principale (voice_guard est calibré
+    sur les transcriptions Whisper ; 2e modèle 2B résident à côté du qwen
+    épinglé = scénario des 24 s du 19/08 ; pas de MLX ; outils/français
+    non mesurés). Le codec seul n'apporte rien à Whisper→qwen→Kokoro.
+    Voir `docs/DECISIONS.md` 2026-11-13.
 14. **Micro dédié cuisine (lead PROMU le 22/08)** : la voie « diversité de
     profil en bruit » est morte (item 1, incident du 22/08) — le micro
     dédié est désormais LE levier restant contre les faux rejets en

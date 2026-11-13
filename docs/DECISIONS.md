@@ -2301,3 +2301,40 @@ modèle déjà écarté sur le papier. Lead clos « non mesurable sur ce
 Mac » ; si un jour les langues coïncident, attendre le téléchargement
 des assets (plusieurs Go) avant `fm available`, puis dérouler le banc
 décrit plus haut.
+
+## 2026-11-13 — LiquidCodec / LFM3-Audio-2B : aucun rôle dans la boucle actuelle, candidat local parqué pour le « mode débat » (analyse, rien de mesuré)
+
+Source : billet Liquid AI « LiquidCodec » (https://www.liquid.ai/blog/liquidcodec),
+lu le 13/11. Question de Fred : « est-ce que ça aide notre setup ? ».
+
+- **Ce que c'est** : un codec audio *streaming* (tokenizer + détokenizer),
+  ~74 M params, 12,5 Hz (une trame / 80 ms), 24 kHz, encodeur causal,
+  quantification GFSQ. Conçu pour alimenter LFM3-Audio-2B et LFM3-Omni-2B
+  (modèles audio-natifs, sortis en même temps). Ce n'est **ni un STT, ni
+  un TTS, ni un speech-to-speech autonome**. Poids HF (Transformers) +
+  GGUF via les modèles LFM3 ; pas de MLX ; licence non précisée dans le
+  billet ; français dans le jeu d'éval. Vitesse annoncée (CPU mono-thread,
+  FP32, M4 Max) : encode RTF 0,0028 (~361× temps réel), decode 0,0115
+  (~87×).
+- **Verdict : non pour la boucle principale.** Le codec seul n'a aucun
+  point d'accroche dans Whisper → qwen → Kokoro (tout passe par du texte).
+  Il n'a de sens qu'avec LFM3-Audio-2B, c'est-à-dire en remplaçant toute la
+  chaîne, ce qui heurte des décisions prises :
+  - voice_guard (gate d'attention, filtres d'hallucination, phrase stop)
+    est calibré sur les transcriptions Whisper — un modèle audio-natif
+    ne fournit pas (ou mal) ce texte à filtrer.
+  - un 2e modèle 2B résident à côté du qwen épinglé = la contention GPU
+    des 24 s du 19/08, même raison qui bloque Kyutai STT derrière le
+    rapport de latence (28/10).
+  - TTS : le plan est Kyutai Pocket TTS (100 M, CPU) pour **soulager** le
+    GPU ; un 2B pour parler va dans le mauvais sens par rapport à Kokoro.
+  - plugins : rien sur l'appel d'outils en français au niveau de qwen.
+- **Où ça peut servir** : item 13 du roadmap (« mode débat » speech-to-speech
+  opt-in), parqué avec des modèles cloud uniquement et écarté comme boucle
+  principale parce que l'audio continu vers le cloud rompt voice_guard.
+  LFM3-Audio-2B en local (llama.cpp) serait le premier candidat **local**
+  crédible pour ce mode, ce qui lève l'objection privacy. Reste un lead :
+  session parallèle que le gate ouvre, « Olympia stop » (canal brut) tue.
+- **Rien d'implémenté, rien de mesuré.** À reconsidérer seulement si le
+  mode débat est promu ; il faudra alors mesurer sur ce Mac : charge GPU
+  à côté de qwen, qualité française, latence bout-en-bout.
