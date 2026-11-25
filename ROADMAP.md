@@ -555,6 +555,12 @@ Vérifié le 14/08 : ces points de la revue sont toujours ouverts.
   documenté, TTFT 0,47–1,6 s, pas de pinning de version, plus
   d'adaptateurs → ni LLM principal ni juge pour l'item 16 ; seul atout :
   tourne sur l'ANE, GPU libre. Voir `docs/DECISIONS.md` 2026-10-26.
+- ~~Challenger Ternary Bonsai 2.5 27B (PrismML, ternaire de Qwen3.8 27B)~~
+  **écarté 25/11** : outils 18/18 comme qwen, TTFT 0,14–0,18 s avec cache
+  de préfixe, mais 50 tok/s contre 122, prefill à froid ~800 tok/s (9,7 s
+  pour 6,8 k tokens contre 1,5 s), 12–13 Go en service, pas d'Ollama et un
+  loader MLX maison. Bench rejouable : `tools/bench_llm/` (protocole 18 cas
+  reconstruit). Voir `docs/DECISIONS.md` 2026-11-25.
 - ~~Ops : l'auto-update d'Ollama.app décharge le qwen épinglé~~ **fait
   21/10** : `ops/check-ai-stack.sh` ré-épingle (alerte seulement si ça
   échoue). Voir `docs/DECISIONS.md` 2026-10-21.

@@ -2395,3 +2395,91 @@ lu le 13/11. Question de Fred : « est-ce que ça aide notre setup ? ».
 - **Rien d'implémenté, rien de mesuré.** À reconsidérer seulement si le
   mode débat est promu ; il faudra alors mesurer sur ce Mac : charge GPU
   à côté de qwen, qualité française, latence bout-en-bout.
+
+## 2026-11-25 — Ternary Bonsai 2.5 27B (PrismML) : qualifié mais dominé par qwen, pas de changement
+
+Source : annonce prismml.com du 24/11 (ternaire de **Qwen3.8 27B dense**,
+Apache 2.0, « 5,9 Go »). Pack testé : `prism-ml/Ternary-Bonsai-2.5-27B-mlx-2bit`
+(8,6 Go, 2 bits group 128, tour vision fp16, loader maison obligatoire —
+transformées de Hadamard, `mlx_lm.load()` refuse ; mlx 0.32 / mlx-vlm 0.6.3
+dans un venv à part). Pas d'Ollama, pas de serveur OpenAI avec tool-calls.
+
+Bench rejoué sur les deux modèles le même jour (`tools/bench_llm/`,
+reconstruction du protocole 14-15/08 dont les scripts étaient perdus : prompt
+système FR réel + les 10 schémas d'outils réels, temp 0,2, reasoning off,
+6 questions × 3, tour long ~10 k chars, 18 cas outils). Bonsai mesuré AVEC
+un cache de préfixe (système + outils pré-remplis une fois, copiés à chaque
+tour = équivalent du cache d'Ollama ; sorties vérifiées identiques au
+froid à temp 0). Attention : le `PromptCacheState` de mlx-vlm est FAUX sur
+cette archi hybride (48/64 couches à attention linéaire, état non
+trimmable) — ne pas l'utiliser tel quel.
+
+| | qwen3.6:35b-a3b-ctx32k | Bonsai 2.5 27B |
+|---|---|---|
+| TTFT médian court (préfixe en cache) | 0,04 s | 0,14 s |
+| TTFT médian long (historique en cache) | 0,04 s | 0,18 s |
+| Prefill à froid (6,8 k tokens) | 1,49 s | **9,7 s** (~700–880 tok/s) |
+| Décodage | 122 tok/s | 50 tok/s |
+| Outils (18) | 18/18 (`news` 18/18) | 18/18 (`news` 18/18) |
+| Outil parasite sur questions sans outil | 2/18 (dessert → web_search) | 0/18 |
+| Mémoire | 23,5 Go (`/api/ps`) | 8,5 Go poids chargés ; 12,2 Go avec le préfixe en cache, pic 12,6 Go sur un tour court, 13,1 Go sur 6,8 k tokens à froid |
+
+- **Outils : à égalité.** Bonsai choisit bien `voir_la_meteo_d` pour la
+  météo et ne cherche pas quand ce n'est pas utile. Il met `type:"news"` un
+  peu partout (le prix du gazole, les films), ce qui est sans gravité.
+- **Français : défauts différents de chaque côté.** qwen déforme
+  « vingt-trois » (« vingt-troiga », 3/3) et se trompe sur 17×23. Bonsai
+  calcule juste 2 fois sur 3, mais écrit « buena noche » (2/3) et « le vélo
+  a-t-il tombé », et répond « Plante, lumière. » quand on lui demande « en
+  deux mots ».
+- **Le prefill est le point faible.** À chaque raté de cache, il faut 4 s
+  pour le préfixe seul et 10 s pour un long historique. En production, ça
+  arrive au premier tour de chaque session et chaque fois que
+  `HistoryTrimmer` coupe le début de l'historique (au-delà de 40 messages).
+  À taille égale, qwen tient en 1,5 s.
+- **Mémoire : le seul vrai atout.** Le « 5,9 Go » annoncé correspond au
+  GGUF. Le pack MLX fait 8,6 Go sur disque, 8,5 Go une fois chargé, et
+  12–13 Go en service. Le premier relevé de 19,6 Go était gonflé par le
+  bench lui-même (copies du snapshot, logits pleine taille sur le prefill du
+  préfixe) : ne pas le citer. À côté du qwen (23,5 Go), il reste environ
+  27 Go libres sur 64 Go.
+- **Décision : on garde qwen.** Bonsai n'apporte rien sur le chemin chaud,
+  et l'intégrer demanderait un serveur maison (rendu du template avec les
+  outils, parser XML `<function=…>`, cache de préfixe hybride). Il reste un
+  candidat de secours pour le mode débat (item 13) ou un worker de fond, à
+  condition de le servir derrière un vrai serveur avec cache de préfixe. La
+  tête MTP n'a pas été testée : l'éditeur annonce un gain de vitesse, mais
+  avoue qu'il n'a pas mesuré le débit sur Apple. Les poids ne sont pas
+  installés dans le projet ; ils sont restés dans le scratchpad de la
+  session.
+
+**Cohabitation mesurée (même jour).** Question : peut-il rester résident à
+côté du qwen épinglé pour un mode débat ou un worker de fond ? Sonde du
+chemin chaud : Whisper fp16 turbo sur 8 clips, qwen sur 12 questions, un
+tour long et 6 cas outils. On la lance une fois Bonsai éteint, puis une
+fois pendant que Bonsai génère en continu (400 tokens par boucle) :
+
+| | Bonsai éteint | Bonsai génère |
+|---|---|---|
+| Whisper (médiane / max) | 0,13 / 0,13 s | 0,19 / 0,20 s (+50 %) |
+| qwen TTFT (médiane / max) | 0,32 / 0,69 s | 0,44 / **1,22 s** |
+| qwen décodage | 128 tok/s | **66 tok/s** (÷2) |
+| qwen tour long, à froid | 1,39 s | 1,81 s |
+| qwen appel d'outil complet (médiane) | 0,72 s | 1,27 s |
+| Bonsai décodage | 47 tok/s seul | 24 tok/s pendant la sonde |
+
+- **Mémoire : pas de risque.** Résidents ensemble, environ 36 Go sur 64.
+  83 % de mémoire libre, limite GPU par défaut. Comme il tourne hors
+  d'Ollama, il ne peut pas déclencher l'éviction du 21/08 (Hermes).
+- **GPU : il y a de la contention.** Le GPU est partagé et les deux
+  modèles se partagent la bande passante mémoire. Pendant que Bonsai
+  génère, chaque étape vocale ralentit, et l'écart s'accumule sur un tour
+  à plusieurs passes. C'est le mécanisme soupçonné derrière la génération
+  de 24 s du 19/08. Le décodage à 66 tok/s reste au-dessus du débit de
+  parole ; le vrai coût est le TTFT et l'aller-retour des outils.
+- **Règle si on l'adopte un jour : résident oui, concurrent non.** Le
+  worker se met en pause pendant qu'un tour vocal est actif (dès la parole
+  détectée, jusqu'à la fin du TTS) et ne tourne que pendant les silences.
+  Pour le mode débat, les deux modèles parlent à tour de rôle, donc ça ne
+  pose pas de problème. Rien n'est implémenté.
+
